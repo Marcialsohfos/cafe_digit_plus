@@ -4,12 +4,13 @@ from datetime import datetime
 import streamlit as st
 
 from common import init_page, footer
-from db import get_conn, new_id
+from db import get_conn, new_id, is_module_unlocked, add_submission, get_submissions
+from i18n import t
 import auth
 
-init_page("Cours", icon="📚")
+init_page(t("Cours", "Courses"), icon="📚")
 
-LESSON_ICON = {"VIDEO": "🎬", "PDF": "📄", "TEXT": "📖", "R_SANDBOX": "🧪"}
+LESSON_ICON = {"VIDEO": "🎬", "PDF": "📄", "TEXT": "📖", "R_SANDBOX": "🧪", "RESOURCE": "📦", "LAB": "🔧"}
 
 
 def load_courses():
@@ -48,7 +49,10 @@ def enroll(user_id, course):
         ).fetchone()
         if not premium:
             conn.close()
-            return False, "Ce cours est payant. Un paiement ou un abonnement premium actif est requis."
+            return False, t(
+                "Ce cours est payant. Un paiement ou un abonnement premium actif est requis.",
+                "This is a paid course. An active payment or premium subscription is required.",
+            )
     existing = conn.execute("SELECT id FROM enrollments WHERE user_id=? AND course_id=?", (user_id, course["id"])).fetchone()
     if not existing:
         conn.execute(
@@ -57,7 +61,7 @@ def enroll(user_id, course):
         )
         conn.commit()
     conn.close()
-    return True, "Inscription confirmée ! Bon apprentissage."
+    return True, t("Inscription confirmée ! Bon apprentissage.", "Enrollment confirmed! Happy learning.")
 
 
 def mark_complete(user_id, lesson_id, course_id):
@@ -96,19 +100,23 @@ qp = st.query_params
 selected_slug = qp.get("cours")
 
 if not selected_slug:
-    st.title("Catalogue de formations")
+    st.title(t("Catalogue de formations", "Course catalog"))
     st.caption(
-        "Cycles thématiques en modélisation mathématique, IA et Big Data — du palier gratuit "
-        "aux modules certifiants."
+        t(
+            "Cycles thématiques en modélisation mathématique, IA et Big Data — du palier gratuit "
+            "aux modules certifiants.",
+            "Thematic cycles in mathematical modeling, AI and Big Data — from the free tier "
+            "to certifying modules.",
+        )
     )
     courses = load_courses()
     if not courses:
-        st.info("Aucun cours publié pour le moment. Revenez bientôt !")
+        st.info(t("Aucun cours publié pour le moment. Revenez bientôt !", "No course published yet. Check back soon!"))
     else:
         cols = st.columns(3)
         for i, c in enumerate(courses):
             with cols[i % 3]:
-                price = "Gratuit" if c["price_fcfa"] == 0 else f"{c['price_fcfa']:,} FCFA".replace(",", " ")
+                price = t("Gratuit", "Free") if c["price_fcfa"] == 0 else f"{c['price_fcfa']:,} FCFA".replace(",", " ")
                 st.markdown(
                     f'<div class="cd-card">'
                     f'<span class="cd-badge">{c["pillar"]}</span>'
@@ -119,7 +127,7 @@ if not selected_slug:
                     f'<span style="font-weight:600; color:#B4622B;">{price}</span></div></div>',
                     unsafe_allow_html=True,
                 )
-                if st.button("Voir le cours →", key=f"open-{c['id']}", use_container_width=True):
+                if st.button(t("Voir le cours →", "View course →"), key=f"open-{c['id']}", use_container_width=True):
                     st.query_params["cours"] = c["slug"]
                     st.rerun()
 else:
@@ -127,15 +135,15 @@ else:
     course_row = conn.execute("SELECT * FROM courses WHERE slug=? AND published=1", (selected_slug,)).fetchone()
     conn.close()
     if not course_row:
-        st.error("Cours introuvable.")
-        st.page_link("pages/1_📚_Cours.py", label="← Retour au catalogue")
+        st.error(t("Cours introuvable.", "Course not found."))
+        st.page_link("pages/1_📚_Cours.py", label=t("← Retour au catalogue", "← Back to catalog"))
     else:
         course, module_data = load_course_detail(course_row["id"])
         user = auth.current_user()
         enrolled = is_enrolled(user["id"], course["id"]) if user else None
         is_free = (course["price_fcfa"] == 0) and not course["is_premium_only"]
 
-        if st.button("← Retour au catalogue"):
+        if st.button(t("← Retour au catalogue", "← Back to catalog")):
             del st.query_params["cours"]
             st.rerun()
 
@@ -143,20 +151,32 @@ else:
         st.title(course["title"])
         st.write(course["description"])
         if course["context"]:
-            with st.expander("📖 Présentation du cours & objectifs", expanded=True):
+            with st.expander(t("📖 Présentation du cours & objectifs", "📖 Course overview & objectives"), expanded=True):
                 st.markdown(course["context"])
+
+        if course["final_project_text"] or course["certification_text"] or course["mentoring_text"]:
+            with st.expander(t("🎓 Évaluation, accompagnement & certification", "🎓 Assessment, support & certification")):
+                if course["final_project_text"]:
+                    st.markdown(f"**{t('🏁 Projet de fin d\'études (Fil Rouge)', '🏁 Final project (Capstone)')}**")
+                    st.write(course["final_project_text"])
+                if course["certification_text"]:
+                    st.markdown(f"**{t('📜 Certification Café_digit', '📜 Café_digit certification')}**")
+                    st.write(course["certification_text"])
+                if course["mentoring_text"]:
+                    st.markdown(f"**{t('🤝 Espace Accompagnement (post-formation)', '🤝 Post-training support space')}**")
+                    st.write(course["mentoring_text"])
 
         c1, c2, c3 = st.columns([1, 1, 3])
         c1.markdown(f'<span class="cd-pill">{course["level"]}</span>', unsafe_allow_html=True)
-        price_txt = "Gratuit" if is_free else f"{course['price_fcfa']:,} FCFA".replace(",", " ")
+        price_txt = t("Gratuit", "Free") if is_free else f"{course['price_fcfa']:,} FCFA".replace(",", " ")
         c2.markdown(f'<span style="font-weight:600; color:#B4622B;">{price_txt}</span>', unsafe_allow_html=True)
 
         if not enrolled:
             if not user:
-                st.info("Connectez-vous pour vous inscrire à ce cours.")
-                st.page_link("pages/5_🔐_Connexion.py", label="Se connecter →")
+                st.info(t("Connectez-vous pour vous inscrire à ce cours.", "Log in to enroll in this course."))
+                st.page_link("pages/5_🔐_Connexion.py", label=t("Se connecter →", "Log in →"))
             else:
-                label = "S'inscrire gratuitement" if is_free else "Débloquer ce cours"
+                label = t("S'inscrire gratuitement", "Enroll for free") if is_free else t("Débloquer ce cours", "Unlock this course")
                 if st.button(label):
                     ok, msg = enroll(user["id"], course)
                     (st.success if ok else st.error)(msg)
@@ -172,17 +192,27 @@ else:
 
         with left:
             for block in module_data:
-                st.markdown(f"**{block['module']['title']}**")
+                module_unlocked = (
+                    is_module_unlocked(user["id"], course["id"], block["module"]["position"])
+                    if user else block["module"]["position"] == 0
+                )
+                title_prefix = "" if module_unlocked else "🔒 "
+                st.markdown(f"**{title_prefix}{block['module']['title']}**")
                 if block['module']['objective']:
                     st.caption(block['module']['objective'])
-                locked = not is_free and not enrolled
+                if not module_unlocked:
+                    st.caption(t(
+                        "🔒 Réussissez le quiz du module précédent pour déverrouiller ce module.",
+                        "🔒 Pass the previous module's quiz to unlock this module.",
+                    ))
+                access_locked = (not is_free and not enrolled) or not module_unlocked
                 for l in block["lessons"]:
-                    icon = "🔒" if locked else LESSON_ICON.get(l["type"], "•")
-                    if st.button(f"{icon} {l['title']}", key=f"les-{l['id']}", disabled=locked, use_container_width=True):
+                    icon = "🔒" if access_locked else LESSON_ICON.get(l["type"], "•")
+                    if st.button(f"{icon} {l['title']}", key=f"les-{l['id']}", disabled=access_locked, use_container_width=True):
                         st.session_state[lesson_key] = l["id"]
                         st.rerun()
                 for q in block["quizzes"]:
-                    if st.button(f"📝 Quiz : {q['title']}", key=f"quiz-{q['id']}", use_container_width=True):
+                    if st.button(f"📝 {t('Quiz', 'Quiz')} : {q['title']}", key=f"quiz-{q['id']}", disabled=access_locked, use_container_width=True):
                         st.session_state["active_quiz_id"] = q["id"]
                         st.switch_page("pages/10_📝_Quiz.py")
 
@@ -193,29 +223,139 @@ else:
                     if l["id"] == st.session_state.get(lesson_key):
                         active_lesson = l
             if not active_lesson:
-                st.info("Sélectionnez une leçon pour commencer.")
+                st.info(t("Sélectionnez une leçon pour commencer.", "Select a lesson to get started."))
             else:
                 st.subheader(active_lesson["title"])
                 if active_lesson["type"] == "VIDEO":
                     if active_lesson["video_url"]:
                         st.video(active_lesson["video_url"])
                     else:
-                        st.info("Vidéo à venir — l'administrateur alimentera bientôt ce module.")
+                        st.info(t(
+                            "Vidéo à venir — l'administrateur alimentera bientôt ce module.",
+                            "Video coming soon — the administrator will update this module shortly.",
+                        ))
                 elif active_lesson["type"] == "PDF":
                     if active_lesson["pdf_url"]:
-                        st.markdown(f"[Ouvrir le PDF]({active_lesson['pdf_url']})")
+                        st.markdown(f"[{t('Ouvrir le PDF', 'Open the PDF')}]({active_lesson['pdf_url']})")
                     else:
-                        st.info("PDF à venir.")
+                        st.info(t("PDF à venir.", "PDF coming soon."))
                 elif active_lesson["type"] == "TEXT":
                     st.write(active_lesson["content"] or "")
                 elif active_lesson["type"] == "R_SANDBOX":
                     st.markdown(f'<div class="cd-mono">{active_lesson["content"] or ""}</div>', unsafe_allow_html=True)
-                    st.caption("→ Testez ce code dans l'onglet Sandbox R du menu latéral.")
+                    st.caption(t(
+                        "→ Testez ce code dans l'onglet Sandbox R du menu latéral.",
+                        "→ Test this code in the R Sandbox tab from the side menu.",
+                    ))
+                elif active_lesson["type"] == "RESOURCE":
+                    st.write(active_lesson["content"] or "")
+                    if active_lesson["resource_url"]:
+                        st.markdown(f"[{t('📦 Télécharger la ressource', '📦 Download the resource')}]({active_lesson['resource_url']})")
+                    else:
+                        st.info(t("Ressource à venir.", "Resource coming soon."))
+                elif active_lesson["type"] == "LAB":
+                    st.write(active_lesson["content"] or "")
+                    if active_lesson["resource_url"]:
+                        st.markdown(f"[{t('📎 Support du cas pratique', '📎 Case study handout')}]({active_lesson['resource_url']})")
+
+                if active_lesson["type"] != "RESOURCE" and active_lesson["resource_url"]:
+                    st.markdown(f"[{t('📎 Télécharger le script associé', '📎 Download the associated script')}]({active_lesson['resource_url']})")
 
                 if user:
-                    if st.button("Marquer comme terminée ✓", key=f"done-{active_lesson['id']}"):
+                    if st.button(t("Marquer comme terminée ✓", "Mark as complete ✓"), key=f"done-{active_lesson['id']}"):
                         mark_complete(user["id"], active_lesson["id"], course["id"])
-                        st.success("Progression enregistrée.")
+                        st.success(t("Progression enregistrée.", "Progress saved."))
                         st.rerun()
+
+                # 🔧 Sandbox / Dépôt de code : soumission du cas pratique pour correction
+                if user and active_lesson["type"] == "LAB":
+                    st.markdown("---")
+                    st.markdown(f"##### {t('🔧 Déposer votre travail pour correction', '🔧 Submit your work for review')}")
+                    with st.form(f"submit_lab_{active_lesson['id']}"):
+                        sub_file = st.file_uploader(
+                            t("Fichier de code (.R, .py, .do, .txt...)", "Code file (.R, .py, .do, .txt...)"),
+                            key=f"subf-{active_lesson['id']}",
+                        )
+                        sub_code = st.text_area(
+                            t("Ou collez directement votre code / rapport ici", "Or paste your code / report directly here"),
+                            key=f"subc-{active_lesson['id']}", height=150,
+                        )
+                        sub_comment = st.text_input(t("Commentaire (optionnel)", "Comment (optional)"), key=f"subm-{active_lesson['id']}")
+                        sub_go = st.form_submit_button(t("📤 Soumettre pour correction", "📤 Submit for review"))
+                    if sub_go:
+                        content, fname = None, None
+                        if sub_file is not None:
+                            fname = sub_file.name
+                            try:
+                                content = sub_file.getvalue().decode("utf-8", errors="replace")
+                            except Exception:
+                                content = t("(fichier binaire non prévisualisable)", "(binary file, no preview available)")
+                        elif sub_code.strip():
+                            content = sub_code
+                            fname = f"{active_lesson['title']}.txt"
+                        if not content:
+                            st.error(t("Ajoutez un fichier ou collez du code avant de soumettre.", "Add a file or paste code before submitting."))
+                        else:
+                            add_submission(
+                                user["id"], course["id"], active_lesson["title"], kind="LAB",
+                                module_id=active_lesson["module_id"], lesson_id=active_lesson["id"],
+                                file_name=fname, file_content=content, comment=sub_comment,
+                            )
+                            st.success(t(
+                                "Dépôt envoyé — vous recevrez un retour dans votre espace « Mon espace ».",
+                                "Submission sent — you'll receive feedback in your « My space » page.",
+                            ))
+                            st.rerun()
+
+                    my_subs = [
+                        s for s in get_submissions(course_id=course["id"], user_id=user["id"])
+                        if s["lesson_id"] == active_lesson["id"]
+                    ]
+                    if my_subs:
+                        st.caption(t("Vos dépôts précédents pour ce cas pratique :", "Your previous submissions for this case study:"))
+                        for s in my_subs:
+                            state = t("✅ corrigé", "✅ reviewed") if s["status"] == "REVIEWED" else t("🕓 en attente de correction", "🕓 awaiting review")
+                            st.write(f"- {s['created_at'][:16].replace('T', ' ')} — {state}")
+                            if s["status"] == "REVIEWED":
+                                st.caption(t(
+                                    f"Note : {s['grade'] or '—'} · Retour : {s['feedback'] or '—'}",
+                                    f"Grade: {s['grade'] or '—'} · Feedback: {s['feedback'] or '—'}",
+                                ))
+
+        # 🏁 Projet de fin d'études (Fil Rouge) : dépôt global du cours
+        if user and enrolled and course["final_project_text"]:
+            st.markdown("---")
+            st.markdown(f"### {t('🏁 Projet de fin d\'études (Fil Rouge)', '🏁 Final project (Capstone)')}")
+            st.write(course["final_project_text"])
+            with st.form(f"submit_final_{course['id']}"):
+                fp_file = st.file_uploader(
+                    t("Fichier (script + rapport, .zip/.txt/.R/.py/.do)", "File (script + report, .zip/.txt/.R/.py/.do)"),
+                    key=f"fpf-{course['id']}",
+                )
+                fp_code = st.text_area(t("Ou collez votre rapport de synthèse ici", "Or paste your summary report here"), key=f"fpc-{course['id']}", height=150)
+                fp_comment = st.text_input(t("Commentaire (optionnel)", "Comment (optional)"), key=f"fpm-{course['id']}")
+                fp_go = st.form_submit_button(t("📤 Soumettre le projet final", "📤 Submit the final project"))
+            if fp_go:
+                content, fname = None, None
+                if fp_file is not None:
+                    fname = fp_file.name
+                    try:
+                        content = fp_file.getvalue().decode("utf-8", errors="replace")
+                    except Exception:
+                        content = t("(fichier binaire non prévisualisable)", "(binary file, no preview available)")
+                elif fp_code.strip():
+                    content, fname = fp_code, f"projet_final_{course['slug']}.txt"
+                if not content:
+                    st.error(t("Ajoutez un fichier ou collez votre rapport avant de soumettre.", "Add a file or paste your report before submitting."))
+                else:
+                    add_submission(
+                        user["id"], course["id"], t(f"Projet final — {course['title']}", f"Final project — {course['title']}"), kind="FINAL_PROJECT",
+                        file_name=fname, file_content=content, comment=fp_comment,
+                    )
+                    st.success(t(
+                        "Projet soumis — un administrateur validera votre certification après correction.",
+                        "Project submitted — an administrator will validate your certification after review.",
+                    ))
+                    st.rerun()
 
 footer()

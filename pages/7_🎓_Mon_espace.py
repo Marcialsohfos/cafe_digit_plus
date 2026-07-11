@@ -1,18 +1,19 @@
 import streamlit as st
 
 from common import init_page, footer
-from db import get_conn, get_course_quiz_summary
+from db import get_conn, get_course_quiz_summary, get_submissions
+from i18n import t
 import auth
 
-init_page("Mon espace", icon="🎓")
+init_page(t("Mon espace", "My space"), icon="🎓")
 
 user = auth.current_user()
 if not user:
-    st.warning("Connectez-vous pour accéder à votre espace.")
-    st.page_link("pages/5_🔐_Connexion.py", label="Se connecter →")
+    st.warning(t("Connectez-vous pour accéder à votre espace.", "Log in to access your space."))
+    st.page_link("pages/5_🔐_Connexion.py", label=t("Se connecter →", "Log in →"))
     st.stop()
 
-st.title(f"Bonjour, {user['fullName'].split(' ')[0]} 👋")
+st.title(t(f"Bonjour, {user['fullName'].split(' ')[0]} 👋", f"Hello, {user['fullName'].split(' ')[0]} 👋"))
 
 conn = get_conn()
 enrollments = conn.execute(
@@ -28,9 +29,9 @@ subs = conn.execute(
 ).fetchall()
 conn.close()
 
-st.markdown("### Mes cours")
+st.markdown(f"### {t('Mes cours', 'My courses')}")
 if not enrollments:
-    st.caption("Aucune inscription pour l'instant.")
+    st.caption(t("Aucune inscription pour l'instant.", "No enrollment yet."))
 else:
     cols = st.columns(2)
     for i, e in enumerate(enrollments):
@@ -40,24 +41,24 @@ else:
             if summary["quizzes_total"]:
                 quiz_line = (
                     f'<p style="font-size:0.75rem; color:rgba(30,42,36,0.6); margin-top:0.2rem;">'
-                    f'✅ {summary["total_correct"]}/{summary["total_possible"]} bonnes réponses trouvées · '
-                    f'{summary["quizzes_passed"]}/{summary["quizzes_total"]} quiz réussis</p>'
+                    f'✅ {t(f"{summary["total_correct"]}/{summary["total_possible"]} bonnes réponses trouvées", f"{summary["total_correct"]}/{summary["total_possible"]} correct answers found")} · '
+                    f'{t(f"{summary["quizzes_passed"]}/{summary["quizzes_total"]} quiz réussis", f"{summary["quizzes_passed"]}/{summary["quizzes_total"]} quizzes passed")}</p>'
                 )
             st.markdown(
                 f'<div class="cd-card"><b>{e["title"]}</b>'
                 f'<div style="background:rgba(42,27,18,0.1); border-radius:999px; height:8px; margin-top:0.5rem;">'
                 f'<div style="background:#B4622B; width:{e["progress_pct"]}%; height:8px; border-radius:999px;"></div></div>'
-                f'<p style="font-size:0.75rem; color:rgba(30,42,36,0.5); margin-top:0.3rem;">{e["progress_pct"]}% complété</p>'
+                f'<p style="font-size:0.75rem; color:rgba(30,42,36,0.5); margin-top:0.3rem;">{t(f"{e['progress_pct']}% complété", f"{e['progress_pct']}% complete")}</p>'
                 f'{quiz_line}</div>',
                 unsafe_allow_html=True,
             )
-            if st.button("Continuer →", key=f"cont-{e['id']}"):
+            if st.button(t("Continuer →", "Continue →"), key=f"cont-{e['id']}"):
                 st.query_params["cours"] = e["slug"]
                 st.switch_page("pages/1_📚_Cours.py")
 
-st.markdown("### Mes tentatives de quiz")
+st.markdown(f"### {t('Mes tentatives de quiz', 'My quiz attempts')}")
 if not attempts:
-    st.caption("Aucun quiz passé pour le moment.")
+    st.caption(t("Aucun quiz passé pour le moment.", "No quiz taken yet."))
 else:
     for a in attempts:
         ok = bool(a["passed"])
@@ -68,9 +69,26 @@ else:
             unsafe_allow_html=True,
         )
 
-st.markdown("### Mes offres")
+st.markdown(f"### {t('Mes dépôts (cas pratiques & projet final)', 'My submissions (labs & final project)')}")
+my_submissions = get_submissions(user_id=user["id"])
+if not my_submissions:
+    st.caption(t("Aucun dépôt pour le moment.", "No submission yet."))
+else:
+    for s in my_submissions:
+        reviewed = s["status"] == "REVIEWED"
+        badge = t("✅ Corrigé", "✅ Reviewed") if reviewed else t("🕓 En attente de correction", "🕓 Awaiting review")
+        st.markdown(
+            f'<div class="cd-card"><b>{s["title"]}</b> — <span style="font-size:0.8rem; '
+            f'color:rgba(30,42,36,0.6);">{s["course_title"]}</span>'
+            f'<div style="margin-top:0.3rem;"><span class="cd-badge">{badge}</span></div></div>',
+            unsafe_allow_html=True,
+        )
+        if reviewed:
+            st.caption(t(f"Note : {s['grade'] or '—'} · Retour : {s['feedback'] or '—'}", f"Grade: {s['grade'] or '—'} · Feedback: {s['feedback'] or '—'}"))
+
+st.markdown(f"### {t('Mes offres', 'My plans')}")
 if not subs:
-    st.caption("Aucune offre souscrite.")
+    st.caption(t("Aucune offre souscrite.", "No plan subscribed."))
 else:
     for s in subs:
         active = s["status"] == "ACTIVE"
@@ -81,6 +99,6 @@ else:
             f'color:{"#2F5D50" if active else "#E08A3E"};">{s["status"]}</span></div>',
             unsafe_allow_html=True,
         )
-st.page_link("pages/3_💳_Abonnement.py", label="Gérer mes offres →")
+st.page_link("pages/3_💳_Abonnement.py", label=t("Gérer mes offres →", "Manage my plans →"))
 
 footer()

@@ -5,33 +5,37 @@ import streamlit as st
 
 from common import init_page, footer
 from db import get_conn, new_id
+from i18n import t
 import auth
 
-init_page("Quiz", icon="📝")
+init_page(t("Quiz", "Quiz"), icon="📝")
 
 user = auth.current_user()
 if not user:
-    st.warning("Connectez-vous pour passer un quiz.")
-    st.page_link("pages/5_🔐_Connexion.py", label="Se connecter →")
+    st.warning(t("Connectez-vous pour passer un quiz.", "Log in to take a quiz."))
+    st.page_link("pages/5_🔐_Connexion.py", label=t("Se connecter →", "Log in →"))
     st.stop()
 
 quiz_id = st.session_state.get("active_quiz_id")
 if not quiz_id:
-    st.info("Aucun quiz sélectionné. Ouvrez un cours puis cliquez sur un quiz de module.")
-    st.page_link("pages/1_📚_Cours.py", label="← Aller au catalogue")
+    st.info(t(
+        "Aucun quiz sélectionné. Ouvrez un cours puis cliquez sur un quiz de module.",
+        "No quiz selected. Open a course, then click on a module quiz.",
+    ))
+    st.page_link("pages/1_📚_Cours.py", label=t("← Aller au catalogue", "← Go to catalog"))
     st.stop()
 
 conn = get_conn()
 quiz = conn.execute("SELECT * FROM quizzes WHERE id=? AND published=1", (quiz_id,)).fetchone()
 if not quiz:
     conn.close()
-    st.error("Quiz introuvable.")
+    st.error(t("Quiz introuvable.", "Quiz not found."))
     st.stop()
 questions = conn.execute("SELECT * FROM questions WHERE quiz_id=? ORDER BY position", (quiz_id,)).fetchall()
 conn.close()
 
 st.title(quiz["title"])
-st.caption(f"Seuil de réussite : {quiz['pass_score_pct']}%")
+st.caption(t(f"Seuil de réussite : {quiz['pass_score_pct']}%", f"Passing score: {quiz['pass_score_pct']}%"))
 
 result_key = f"quiz_result_{quiz_id}"
 
@@ -43,9 +47,12 @@ if result_key not in st.session_state:
             st.markdown(f"**{idx + 1}. {q['prompt']}**")
             options = json.loads(q["options"]) if q["options"] else None
             if q["type"] in ("MCQ_SINGLE", "TRUE_FALSE"):
-                opts = options or [{"id": "true", "text": "Vrai"}, {"id": "false", "text": "Faux"}]
+                opts = options or [
+                    {"id": "true", "text": t("Vrai", "True")},
+                    {"id": "false", "text": t("Faux", "False")},
+                ]
                 labels = [o["text"] for o in opts]
-                choice = st.radio("Réponse", labels, key=f"q_{q['id']}", label_visibility="collapsed")
+                choice = st.radio(t("Réponse", "Answer"), labels, key=f"q_{q['id']}", label_visibility="collapsed")
                 answers[q["id"]] = next(o["id"] for o in opts if o["text"] == choice)
             elif q["type"] == "MCQ_MULTI":
                 selected = []
@@ -54,9 +61,9 @@ if result_key not in st.session_state:
                         selected.append(o["id"])
                 answers[q["id"]] = selected
             elif q["type"] == "SHORT_ANSWER":
-                answers[q["id"]] = st.text_input("Votre réponse", key=f"q_{q['id']}", label_visibility="collapsed")
+                answers[q["id"]] = st.text_input(t("Votre réponse", "Your answer"), key=f"q_{q['id']}", label_visibility="collapsed")
             st.markdown("</div>", unsafe_allow_html=True)
-        submitted = st.form_submit_button("Soumettre mes réponses")
+        submitted = st.form_submit_button(t("Soumettre mes réponses", "Submit my answers"))
 
     if submitted:
         earned, total, correction = 0, 0, []
@@ -96,9 +103,9 @@ else:
     result = st.session_state[result_key]
     bg = "#2F5D50" if result["passed"] else "#B4622B"
     status_txt = (
-        "Quiz réussi — félicitations !"
+        t("Quiz réussi — félicitations !", "Quiz passed — congratulations!")
         if result["passed"]
-        else f"Non validé (seuil : {quiz['pass_score_pct']}%)"
+        else t(f"Non validé (seuil : {quiz['pass_score_pct']}%)", f"Not passed (threshold: {quiz['pass_score_pct']}%)")
     )
     st.markdown(
         f'<div style="background:rgba(47,93,80,0.08); border-radius:18px; padding:1.6rem; text-align:center;">'
@@ -108,17 +115,19 @@ else:
     )
     for idx, c in enumerate(result["correction"]):
         ok = c["correct"]
+        reponse_label = t("Votre réponse", "Your answer")
+        attendue_label = t("Réponse attendue", "Expected answer")
         st.markdown(
             f'<div class="cd-card" style="border-color:{"#2F5D50" if ok else "#B4622B"};">'
-            f'<b>{idx + 1}. {c["prompt"]}</b><br>Votre réponse : {c["given"]}'
-            + ("" if ok else f'<br>Réponse attendue : {c["correct_answer"]}')
+            f'<b>{idx + 1}. {c["prompt"]}</b><br>{reponse_label} : {c["given"]}'
+            + ("" if ok else f'<br>{attendue_label} : {c["correct_answer"]}')
             + (f'<br><i>{c["explanation"]}</i>' if c["explanation"] else "")
             + "</div>",
             unsafe_allow_html=True,
         )
-    if st.button("Repasser le quiz"):
+    if st.button(t("Repasser le quiz", "Retake the quiz")):
         del st.session_state[result_key]
         st.rerun()
-    st.page_link("pages/7_🎓_Mon_espace.py", label="← Retour à mon espace")
+    st.page_link("pages/7_🎓_Mon_espace.py", label=t("← Retour à mon espace", "← Back to my space"))
 
 footer()
