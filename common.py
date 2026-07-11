@@ -7,6 +7,7 @@ et barre latérale d'authentification commune.
 import streamlit as st
 
 from db import init_db, get_settings
+from i18n import t, language_switcher
 import auth
 
 PALETTE = {
@@ -122,42 +123,43 @@ def init_page(title: str, icon: str = "☕", layout: str = "wide"):
 def render_sidebar():
     with st.sidebar:
         st.markdown("### ☕ Café_digit")
+        language_switcher()
         st.caption("SCSM Sarl — Lab_Math")
         st.markdown("---")
         user = auth.current_user()
         if user:
             role_label = {
-                "STUDENT": "Membre",
-                "ADMIN": "Administrateur",
-                "SUPER_ADMIN": "Super Administrateur",
+                "STUDENT": t("Membre", "Member"),
+                "ADMIN": t("Administrateur", "Administrator"),
+                "SUPER_ADMIN": t("Super Administrateur", "Super Administrator"),
             }.get(user["role"], user["role"])
             st.success(f"**{user['fullName']}**\n\n{role_label}")
-            if st.button("Se déconnecter", use_container_width=True):
+            if st.button(t("Se déconnecter", "Log out"), use_container_width=True):
                 auth.logout()
                 st.rerun()
         else:
-            st.info("Vous n'êtes pas connecté(e).")
+            st.info(t("Vous n'êtes pas connecté(e).", "You're not logged in."))
         st.markdown("---")
-        st.caption("Navigation")
-        st.page_link("streamlit_app.py", label="Accueil", icon="🏠")
-        st.page_link("pages/1_📚_Cours.py", label="Cours", icon="📚")
-        st.page_link("pages/2_🧪_Sandbox_R.py", label="Sandbox R", icon="🧪")
-        st.page_link("pages/3_💳_Abonnement.py", label="Abonnement", icon="💳")
-        st.page_link("pages/4_✉️_Support.py", label="Support & doléances", icon="✉️")
+        st.caption(t("Navigation", "Navigation"))
+        st.page_link("streamlit_app.py", label=t("Accueil", "Home"), icon="🏠")
+        st.page_link("pages/1_📚_Cours.py", label=t("Cours", "Courses"), icon="📚")
+        st.page_link("pages/2_🧪_Sandbox_R.py", label=t("Sandbox R", "R Sandbox"), icon="🧪")
+        st.page_link("pages/3_💳_Abonnement.py", label=t("Abonnement", "Subscription"), icon="💳")
+        st.page_link("pages/4_✉️_Support.py", label=t("Support & doléances", "Support & feedback"), icon="✉️")
         if user:
-            st.page_link("pages/7_🎓_Mon_espace.py", label="Mon espace", icon="🎓")
+            st.page_link("pages/7_🎓_Mon_espace.py", label=t("Mon espace", "My space"), icon="🎓")
         else:
-            st.page_link("pages/5_🔐_Connexion.py", label="Connexion", icon="🔐")
-            st.page_link("pages/6_🆕_Inscription.py", label="Inscription", icon="🆕")
+            st.page_link("pages/5_🔐_Connexion.py", label=t("Connexion", "Log in"), icon="🔐")
+            st.page_link("pages/6_🆕_Inscription.py", label=t("Inscription", "Sign up"), icon="🆕")
         if auth.is_admin():
-            st.page_link("pages/9_🛠️_Administration.py", label="Administration", icon="🛠️")
+            st.page_link("pages/9_🛠️_Administration.py", label=t("Administration", "Administration"), icon="🛠️")
         if not user:
-            st.page_link("pages/8_🔑_Super_Admin.py", label="Accès Super Admin", icon="🔑")
+            st.page_link("pages/8_🔑_Super_Admin.py", label=t("Accès Super Admin", "Super Admin access"), icon="🔑")
 
 
 def footer():
-    st.markdown(
-        '<div class="cd-footer">Café_digit — un dispositif porté par SCSM Sarl · Lab_Math · '
-        'Yaoundé · Bafoussam · Visioconférence</div>',
-        unsafe_allow_html=True,
+    text = t(
+        "Café_digit — un dispositif porté par SCSM Sarl · Lab_Math · Yaoundé · Bafoussam · Visioconférence",
+        "Café_digit — an initiative led by SCSM Sarl · Lab_Math · Yaoundé · Bafoussam · Video conference",
     )
+    st.markdown(f'<div class="cd-footer">{text}</div>', unsafe_allow_html=True)
