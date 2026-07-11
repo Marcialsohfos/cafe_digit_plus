@@ -8,6 +8,7 @@ from db import (
     get_conn, new_id, get_settings, set_setting,
     get_sandbox_examples, add_sandbox_example, delete_sandbox_example,
     validate_subscription_by_email, PLAN_PRICES_FCFA,
+    get_submissions, review_submission,
 )
 import auth
 
@@ -32,7 +33,8 @@ def slugify(text):
 
 
 tabs = ["📊 Tableau de bord", "📚 Cours & contenus", "📝 Quiz & questions",
-        "🧪 Sandbox R", "👥 Utilisateurs", "💳 Paiements", "✉️ Support", "⚙️ Paramètres"]
+        "🧪 Sandbox R", "🗂️ Dépôts à corriger", "👥 Utilisateurs", "💳 Paiements",
+        "✉️ Support", "⚙️ Paramètres"]
 if auth.is_super_admin():
     tabs.append("🛡️ Gestion des admins")
 
@@ -79,6 +81,21 @@ with selected[TAB["📚 Cours & contenus"]]:
             price = st.number_input("Prix (FCFA, 0 = gratuit)", min_value=0, step=1000, value=0)
             premium_only = st.checkbox("Réservé aux membres Premium")
             published = st.checkbox("Publier immédiatement", value=True)
+            st.markdown("###### 🎓 Évaluation, accompagnement & certification")
+            final_project = st.text_area(
+                "🏁 Projet de fin d'études (Fil Rouge)", height=100,
+                placeholder="Modalités de soumission : script (R/Python/Stata) + rapport de synthèse...",
+            )
+            certification = st.text_area(
+                "📜 Certification Café_digit", height=80,
+                placeholder="Ex : Délivrance automatisée du certificat dès la validation du projet "
+                            "final et l'obtention du score minimum aux quiz de chaque module.",
+            )
+            mentoring = st.text_area(
+                "🤝 Espace Accompagnement (post-formation)", height=80,
+                placeholder="Ex : Forum d'entraide pendant 3 mois après la formation, "
+                            "sessions de mentorat mensuelles en direct (webinaires Q&R)...",
+            )
             ok = st.form_submit_button("Créer le cours")
         if ok:
             if not title or not description:
@@ -92,10 +109,12 @@ with selected[TAB["📚 Cours & contenus"]]:
                     n += 1
                 conn.execute(
                     "INSERT INTO courses(id,title,slug,description,context,pillar,level,price_fcfa,"
-                    "is_premium_only,cover_image_url,published,author_id,created_at) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "is_premium_only,cover_image_url,published,author_id,created_at,"
+                    "final_project_text,certification_text,mentoring_text) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (new_id(), title, slug, description, context or None, pillar, level, int(price),
-                     int(premium_only), None, int(published), user["id"], datetime.utcnow().isoformat()),
+                     int(premium_only), None, int(published), user["id"], datetime.utcnow().isoformat(),
+                     final_project or None, certification or None, mentoring or None),
                 )
                 conn.commit()
                 conn.close()
@@ -117,6 +136,19 @@ with selected[TAB["📚 Cours & contenus"]]:
                 e_price = st.number_input("Prix (FCFA)", min_value=0, step=1000, value=course["price_fcfa"])
                 e_premium = st.checkbox("Réservé Premium", value=bool(course["is_premium_only"]))
                 e_pub = st.checkbox("Publié", value=bool(course["published"]))
+                st.markdown("###### 🎓 Évaluation, accompagnement & certification")
+                e_final_project = st.text_area(
+                    "🏁 Projet de fin d'études (Fil Rouge)",
+                    value=course["final_project_text"] or "", height=100,
+                )
+                e_certification = st.text_area(
+                    "📜 Certification Café_digit",
+                    value=course["certification_text"] or "", height=80,
+                )
+                e_mentoring = st.text_area(
+                    "🤝 Espace Accompagnement (post-formation)",
+                    value=course["mentoring_text"] or "", height=80,
+                )
                 col_a, col_b = st.columns(2)
                 save = col_a.form_submit_button("💾 Enregistrer")
                 delete = col_b.form_submit_button("🗑️ Supprimer le cours")
@@ -124,8 +156,9 @@ with selected[TAB["📚 Cours & contenus"]]:
                 conn = get_conn()
                 conn.execute(
                     "UPDATE courses SET title=?, description=?, context=?, price_fcfa=?, is_premium_only=?, "
-                    "published=? WHERE id=?",
-                    (e_title, e_desc, e_context or None, int(e_price), int(e_premium), int(e_pub), course["id"]),
+                    "published=?, final_project_text=?, certification_text=?, mentoring_text=? WHERE id=?",
+                    (e_title, e_desc, e_context or None, int(e_price), int(e_premium), int(e_pub),
+                     e_final_project or None, e_certification or None, e_mentoring or None, course["id"]),
                 )
                 conn.commit()
                 conn.close()
@@ -144,17 +177,31 @@ with selected[TAB["📚 Cours & contenus"]]:
             modules = conn.execute("SELECT * FROM modules WHERE course_id=? ORDER BY position", (course["id"],)).fetchall()
             conn.close()
 
+            st.caption(
+                "💡 Astuce : créez d'abord un module « Module 0 — Introduction à la plateforme » "
+                "(mot de bienvenue, vidéo de présentation, guides d'installation R/Python/Stata en "
+                "leçons « 📦 Ressource », quiz initial de diagnostic), puis un module par thème "
+                "(« Module 1 — ... », « Module 2 — ... »)."
+            )
             with st.form(f"new_module_{course['id']}"):
-                m_title = st.text_input("Titre du nouveau module (ex : Module 1 — ...)", key=f"mtitle-{course['id']}")
+                m_title = st.text_input("Titre du nouveau module (ex : Module 0 — Introduction, Module 1 — ...)", key=f"mtitle-{course['id']}")
                 m_objective = st.text_area(
                     "Objectif du module (canevas court : « Objectif : ... »)",
                     key=f"mobj-{course['id']}", height=80,
                 )
+                m_drip = st.checkbox(
+                    "🔒 Suivi de progression (Drip Content) : n'ouvrir ce module qu'après la réussite "
+                    "du quiz du module précédent",
+                    key=f"mdrip-{course['id']}",
+                )
                 m_add = st.form_submit_button("➕ Ajouter un module")
             if m_add and m_title:
                 conn = get_conn()
-                conn.execute("INSERT INTO modules(id,title,objective,position,course_id) VALUES (?,?,?,?,?)",
-                             (new_id(), m_title, m_objective or None, len(modules), course["id"]))
+                conn.execute(
+                    "INSERT INTO modules(id,title,objective,position,course_id,requires_prior_quiz) "
+                    "VALUES (?,?,?,?,?,?)",
+                    (new_id(), m_title, m_objective or None, len(modules), course["id"], int(m_drip)),
+                )
                 conn.commit()
                 conn.close()
                 st.rerun()
@@ -167,54 +214,125 @@ with selected[TAB["📚 Cours & contenus"]]:
                             "Objectif du module", value=module["objective"] or "",
                             key=f"emo-{module['id']}", height=80,
                         )
+                        em_drip = st.checkbox(
+                            "🔒 Suivi de progression (Drip Content) : n'ouvrir ce module qu'après la "
+                            "réussite du quiz du module précédent",
+                            value=bool(module["requires_prior_quiz"]), key=f"emdrip-{module['id']}",
+                        )
                         em_save = st.form_submit_button("💾 Enregistrer le module")
                     if em_save:
                         conn = get_conn()
-                        conn.execute("UPDATE modules SET title=?, objective=? WHERE id=?",
-                                     (em_title, em_obj or None, module["id"]))
+                        conn.execute("UPDATE modules SET title=?, objective=?, requires_prior_quiz=? WHERE id=?",
+                                     (em_title, em_obj or None, int(em_drip), module["id"]))
                         conn.commit()
                         conn.close()
                         st.rerun()
                 if module["objective"]:
                     st.caption(f"🎯 {module['objective']}")
+                if module["requires_prior_quiz"]:
+                    st.caption("🔒 Drip content activé — déverrouillé après le quiz du module précédent.")
                 st.markdown(f"**{module['title']}**")
                 conn = get_conn()
                 lessons = conn.execute("SELECT * FROM lessons WHERE module_id=? ORDER BY position", (module["id"],)).fetchall()
                 quizzes = conn.execute("SELECT * FROM quizzes WHERE module_id=?", (module["id"],)).fetchall()
                 conn.close()
 
+                LESSON_TYPE_LABELS = {
+                    "TEXT": "📖 Texte / cours (Session)", "VIDEO": "🎬 Vidéo",
+                    "PDF": "📄 PDF (exercice / TP)", "R_SANDBOX": "🧪 Sandbox R (pratique)",
+                    "RESOURCE": "📦 Ressource téléchargeable (guide, script .R/.py/.do)",
+                    "LAB": "🔧 Cas pratique Lab",
+                }
                 for l in lessons:
-                    lc1, lc2 = st.columns([5, 1])
-                    lc1.caption(f"{l['type']} — {l['title']}")
-                    if lc2.button("🗑️", key=f"dellesson-{l['id']}"):
-                        conn = get_conn()
-                        conn.execute("DELETE FROM lessons WHERE id=?", (l["id"],))
-                        conn.commit()
-                        conn.close()
-                        st.rerun()
+                    label = f"{LESSON_TYPE_LABELS.get(l['type'], l['type'])} — {l['title']}"
+                    if l["video_url"] or l["pdf_url"]:
+                        label += "  ·  🔗 média renseigné"
+                    elif l["type"] in ("VIDEO", "PDF"):
+                        label += "  ·  ⚠️ média manquant"
+                    if l["resource_url"]:
+                        label += "  ·  📎 ressource jointe"
+                    with st.expander(f"✏️ {label}"):
+                        with st.form(f"edit_lesson_{l['id']}"):
+                            el_title = st.text_input("Titre", value=l["title"], key=f"elt-{l['id']}")
+                            el_type = st.selectbox(
+                                "Type", ["TEXT", "VIDEO", "PDF", "R_SANDBOX", "RESOURCE", "LAB"],
+                                index=["TEXT", "VIDEO", "PDF", "R_SANDBOX", "RESOURCE", "LAB"].index(l["type"])
+                                if l["type"] in ["TEXT", "VIDEO", "PDF", "R_SANDBOX", "RESOURCE", "LAB"] else 0,
+                                format_func=lambda x: LESSON_TYPE_LABELS[x], key=f"elty-{l['id']}",
+                            )
+                            el_content = st.text_area(
+                                "Description / contenu texte / code R / notes",
+                                value=l["content"] or "", key=f"elc-{l['id']}",
+                            )
+                            el_url = st.text_input(
+                                "URL vidéo (YouTube, Vimeo, .mp4...) ou URL du PDF",
+                                value=l["video_url"] or l["pdf_url"] or "", key=f"elu-{l['id']}",
+                                placeholder="https://...",
+                            )
+                            el_resource = st.text_input(
+                                "🔗 Lien du fichier téléchargeable (script .R/.py/.do, guide d'installation...)",
+                                value=l["resource_url"] or "", key=f"elr-{l['id']}",
+                            )
+                            ecol1, ecol2 = st.columns(2)
+                            el_save = ecol1.form_submit_button("💾 Enregistrer")
+                            el_delete = ecol2.form_submit_button("🗑️ Supprimer")
+                        if el_save:
+                            conn = get_conn()
+                            conn.execute(
+                                "UPDATE lessons SET title=?, type=?, content=?, video_url=?, pdf_url=?, "
+                                "resource_url=? WHERE id=?",
+                                (
+                                    el_title, el_type, el_content or None,
+                                    el_url if el_type == "VIDEO" else None,
+                                    el_url if el_type == "PDF" else None,
+                                    el_resource or None, l["id"],
+                                ),
+                            )
+                            conn.commit()
+                            conn.close()
+                            st.success("Leçon mise à jour.")
+                            st.rerun()
+                        if el_delete:
+                            conn = get_conn()
+                            conn.execute("DELETE FROM lessons WHERE id=?", (l["id"],))
+                            conn.commit()
+                            conn.close()
+                            st.rerun()
 
                 for q in quizzes:
                     st.caption(f"📝 Quiz — {q['title']} ({'publié' if q['published'] else 'brouillon'})")
 
                 with st.form(f"new_lesson_{module['id']}"):
-                    lt = st.text_input("Titre de la leçon / exercice / TP", key=f"lt-{module['id']}")
-                    ltype = st.selectbox(
-                        "Type", ["TEXT", "VIDEO", "PDF", "R_SANDBOX"],
-                        format_func=lambda x: {"TEXT": "📖 Texte / cours", "VIDEO": "🎬 Vidéo",
-                                                "PDF": "📄 PDF (exercice / TP)", "R_SANDBOX": "🧪 Sandbox R (pratique)"}[x],
-                        key=f"lty-{module['id']}",
+                    lt = st.text_input(
+                        "Titre de la leçon / session / exercice / TP (ex : « Session 1 : ... »)",
+                        key=f"lt-{module['id']}",
                     )
-                    lcontent = st.text_area("Contenu texte / code R / notes", key=f"lc-{module['id']}")
+                    ltype = st.selectbox(
+                        "Type", ["TEXT", "VIDEO", "PDF", "R_SANDBOX", "RESOURCE", "LAB"],
+                        format_func=lambda x: LESSON_TYPE_LABELS[x],
+                        key=f"lty-{module['id']}",
+                        help="« 🔧 Cas pratique Lab » = le TP noté du module (🔧 Cas pratique Lab #n). "
+                             "« 📦 Ressource » = guide d'installation ou script (.R/.py/.do) téléchargeable.",
+                    )
+                    lcontent = st.text_area(
+                        "Description / contenu texte / code R / notes de la session",
+                        key=f"lc-{module['id']}",
+                    )
                     lurl = st.text_input("URL vidéo ou PDF (optionnel)", key=f"lu-{module['id']}")
+                    lresource = st.text_input(
+                        "🔗 Lien du fichier téléchargeable (script .R/.py/.do, guide d'installation...)",
+                        key=f"lr-{module['id']}",
+                        placeholder="https://... (ex : dépôt GitHub, Google Drive partagé, etc.)",
+                    )
                     ladd = st.form_submit_button("➕ Ajouter le contenu")
                 if ladd and lt:
                     conn = get_conn()
                     conn.execute(
-                        "INSERT INTO lessons(id,title,type,position,video_url,pdf_url,content,duration_sec,module_id) "
-                        "VALUES (?,?,?,?,?,?,?,?,?)",
+                        "INSERT INTO lessons(id,title,type,position,video_url,pdf_url,content,duration_sec,"
+                        "module_id,resource_url) VALUES (?,?,?,?,?,?,?,?,?,?)",
                         (new_id(), lt, ltype, len(lessons),
                          lurl if ltype == "VIDEO" else None, lurl if ltype == "PDF" else None,
-                         lcontent, None, module["id"]),
+                         lcontent, None, module["id"], lresource or None),
                     )
                     conn.commit()
                     conn.close()
@@ -394,6 +512,53 @@ with selected[TAB["🧪 Sandbox R"]]:
                 st.caption(ex["description"])
             if st.button("🗑️ Supprimer", key=f"delsbex-{ex['id']}"):
                 delete_sandbox_example(ex["id"])
+                st.rerun()
+
+# ------------------------------------------------------- Dépôts à corriger
+with selected[TAB["🗂️ Dépôts à corriger"]]:
+    st.caption(
+        "Espace de dépôt de fichiers : retrouvez ici les cas pratiques (Lab) et projets de fin "
+        "d'études (Fil Rouge) soumis par les apprenants pour correction, notation et retour."
+    )
+    conn = get_conn()
+    all_courses_dep = [dict(r) for r in conn.execute("SELECT id, title FROM courses ORDER BY created_at DESC").fetchall()]
+    conn.close()
+
+    fc1, fc2 = st.columns(2)
+    dep_course_filter = fc1.selectbox(
+        "Filtrer par cours", ["Tous les cours"] + [c["title"] for c in all_courses_dep], key="dep_course_filter",
+    )
+    dep_status_filter = fc2.selectbox(
+        "Filtrer par statut", ["Tous", "SUBMITTED", "REVIEWED"], key="dep_status_filter",
+        format_func=lambda s: {"Tous": "Tous", "SUBMITTED": "🕓 À corriger", "REVIEWED": "✅ Corrigés"}[s],
+    )
+    subs_list = get_submissions(status=None if dep_status_filter == "Tous" else dep_status_filter)
+    if dep_course_filter != "Tous les cours":
+        subs_list = [s for s in subs_list if s["course_title"] == dep_course_filter]
+
+    if not subs_list:
+        st.info("Aucun dépôt pour ce filtre.")
+    for s in subs_list:
+        icon = "✅" if s["status"] == "REVIEWED" else "🕓"
+        with st.expander(f"{icon} [{s['kind']}] {s['title']} — {s['full_name']} ({s['course_title']})"):
+            st.caption(f"{s['email']} · déposé le {s['created_at'][:10]}")
+            if s["comment"]:
+                st.write(f"💬 Commentaire de l'apprenant : {s['comment']}")
+            if s["file_content"]:
+                st.markdown(f'<div class="cd-mono">{s["file_content"]}</div>', unsafe_allow_html=True)
+                st.download_button(
+                    "⬇️ Télécharger le fichier", data=s["file_content"],
+                    file_name=s["file_name"] or f"depot_{s['id'][:8]}.txt", key=f"dl-{s['id']}",
+                )
+            if s["status"] == "REVIEWED":
+                st.success(f"Note : {s['grade'] or '—'} · Retour : {s['feedback'] or '—'}")
+            with st.form(f"review_{s['id']}"):
+                rv_grade = st.text_input("Note / mention", value=s["grade"] or "", key=f"rvg-{s['id']}")
+                rv_feedback = st.text_area("Retour pédagogique", value=s["feedback"] or "", key=f"rvf-{s['id']}")
+                rv_submit = st.form_submit_button("✅ Enregistrer la correction")
+            if rv_submit:
+                review_submission(s["id"], "REVIEWED", rv_grade, rv_feedback, user["id"])
+                st.success("Correction enregistrée — l'apprenant verra le retour dans son espace.")
                 st.rerun()
 
 # ------------------------------------------------------------- Utilisateurs
