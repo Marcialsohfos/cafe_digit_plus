@@ -45,6 +45,13 @@ h1, h2, h3, .display-font {{
 [data-testid="stSidebar"] hr {{
     border-color: rgba(246,239,228,0.2);
 }}
+/* Le menu multi-pages généré automatiquement par Streamlit (à partir des noms
+   de fichiers de /pages) ne peut pas être traduit dynamiquement. On le masque
+   et on le remplace entièrement par la navigation traduite ci-dessous
+   (voir render_sidebar), qui elle réagit bien au sélecteur FR/EN. */
+[data-testid="stSidebarNav"] {{
+    display: none;
+}}
 .cd-card {{
     background-color: {PALETTE['chalk']};
     border: 1px solid rgba(42,27,18,0.1);

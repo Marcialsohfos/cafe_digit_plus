@@ -29,6 +29,31 @@ def t(fr: str, en: str) -> str:
     return en if get_lang() == "en" else fr
 
 
+def tf(row, field: str) -> str:
+    """Retourne la version traduite d'un champ de **contenu pédagogique**
+    stocké en base (titre/description/objectif/contenu d'un cours, module ou
+    leçon).
+
+    Si la langue active est l'anglais et qu'une traduction existe dans la
+    colonne `<field>_en`, elle est renvoyée ; sinon on retombe automatiquement
+    sur le texte français d'origine (`field`), pour ne jamais afficher de
+    contenu vide tant que la traduction n'a pas été saisie par l'administrateur.
+    """
+    if row is None:
+        return ""
+    if get_lang() == "en":
+        try:
+            en_val = row[f"{field}_en"]
+        except (IndexError, KeyError):
+            en_val = None
+        if en_val:
+            return en_val
+    try:
+        return row[field] or ""
+    except (IndexError, KeyError):
+        return ""
+
+
 def language_switcher(location=st.sidebar) -> None:
     """Affiche le sélecteur 🇫🇷 / 🇬🇧 et déclenche un rerun si on change de langue."""
     current = get_lang()

@@ -224,6 +224,17 @@ _MIGRATIONS = [
     "ALTER TABLE modules ADD COLUMN requires_prior_quiz INTEGER NOT NULL DEFAULT 0",
     # 📦 Ressource téléchargeable (script .R/.py/.do) attachée à une leçon
     "ALTER TABLE lessons ADD COLUMN resource_url TEXT",
+    # 🇬🇧 Cours bilingue : version anglaise éditable du contenu pédagogique
+    "ALTER TABLE courses ADD COLUMN title_en TEXT",
+    "ALTER TABLE courses ADD COLUMN description_en TEXT",
+    "ALTER TABLE courses ADD COLUMN context_en TEXT",
+    "ALTER TABLE courses ADD COLUMN final_project_text_en TEXT",
+    "ALTER TABLE courses ADD COLUMN certification_text_en TEXT",
+    "ALTER TABLE courses ADD COLUMN mentoring_text_en TEXT",
+    "ALTER TABLE modules ADD COLUMN title_en TEXT",
+    "ALTER TABLE modules ADD COLUMN objective_en TEXT",
+    "ALTER TABLE lessons ADD COLUMN title_en TEXT",
+    "ALTER TABLE lessons ADD COLUMN content_en TEXT",
 ]
 
 
