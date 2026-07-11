@@ -177,35 +177,86 @@ with selected[TAB["📚 Cours & contenus"]]:
             modules = conn.execute("SELECT * FROM modules WHERE course_id=? ORDER BY position", (course["id"],)).fetchall()
             conn.close()
 
-            st.caption(
-                "💡 Astuce : créez d'abord un module « Module 0 — Introduction à la plateforme » "
-                "(mot de bienvenue, vidéo de présentation, guides d'installation R/Python/Stata en "
-                "leçons « 📦 Ressource », quiz initial de diagnostic), puis un module par thème "
-                "(« Module 1 — ... », « Module 2 — ... »)."
-            )
-            with st.form(f"new_module_{course['id']}"):
-                m_title = st.text_input("Titre du nouveau module (ex : Module 0 — Introduction, Module 1 — ...)", key=f"mtitle-{course['id']}")
-                m_objective = st.text_area(
-                    "Objectif du module (canevas court : « Objectif : ... »)",
-                    key=f"mobj-{course['id']}", height=80,
-                )
-                m_drip = st.checkbox(
-                    "🔒 Suivi de progression (Drip Content) : n'ouvrir ce module qu'après la réussite "
-                    "du quiz du module précédent",
-                    key=f"mdrip-{course['id']}",
-                )
-                m_add = st.form_submit_button("➕ Ajouter un module")
-            if m_add and m_title:
-                conn = get_conn()
-                conn.execute(
-                    "INSERT INTO modules(id,title,objective,position,course_id,requires_prior_quiz) "
-                    "VALUES (?,?,?,?,?,?)",
-                    (new_id(), m_title, m_objective or None, len(modules), course["id"], int(m_drip)),
-                )
-                conn.commit()
-                conn.close()
-                st.rerun()
+            col_new_module, col_new_video = st.columns(2)
 
+            with col_new_module:
+                with st.container(border=True):
+                    st.markdown("###### 🧩 Ajouter un nouveau module")
+                    st.caption(
+                        "💡 Astuce : créez d'abord « Module 0 — Introduction à la plateforme » "
+                        "(bienvenue, vidéo de présentation, guides d'installation, quiz initial de "
+                        "diagnostic), puis un module par thème (« Module 1 — ... », etc.)."
+                    )
+                    with st.form(f"new_module_{course['id']}"):
+                        m_title = st.text_input(
+                            "Titre du nouveau module (ex : Module 0 — Introduction, Module 1 — ...)",
+                            key=f"mtitle-{course['id']}",
+                        )
+                        m_objective = st.text_area(
+                            "Objectif du module (canevas court : « Objectif : ... »)",
+                            key=f"mobj-{course['id']}", height=80,
+                        )
+                        m_drip = st.checkbox(
+                            "🔒 Suivi de progression (Drip Content) : n'ouvrir ce module qu'après la "
+                            "réussite du quiz du module précédent",
+                            key=f"mdrip-{course['id']}",
+                        )
+                        m_add = st.form_submit_button("➕ Ajouter le module")
+                    if m_add:
+                        if not m_title:
+                            st.error("Le titre du module est requis.")
+                        else:
+                            conn = get_conn()
+                            conn.execute(
+                                "INSERT INTO modules(id,title,objective,position,course_id,requires_prior_quiz) "
+                                "VALUES (?,?,?,?,?,?)",
+                                (new_id(), m_title, m_objective or None, len(modules), course["id"], int(m_drip)),
+                            )
+                            conn.commit()
+                            conn.close()
+                            st.success("Module ajouté.")
+                            st.rerun()
+
+            with col_new_video:
+                with st.container(border=True):
+                    st.markdown("###### 🎬 Ajouter une nouvelle vidéo")
+                    if not modules:
+                        st.info("Créez d'abord un module (à gauche) pour pouvoir y ajouter une vidéo.")
+                    else:
+                        st.caption("Publiez directement une vidéo dans le module de votre choix.")
+                        with st.form(f"new_video_{course['id']}"):
+                            v_module = st.selectbox(
+                                "Module", modules, format_func=lambda m: m["title"], key=f"vmod-{course['id']}",
+                            )
+                            v_title = st.text_input(
+                                "Titre de la vidéo (ex : « Vidéo d'introduction »)", key=f"vtitle-{course['id']}",
+                            )
+                            v_url = st.text_input(
+                                "URL de la vidéo (YouTube, Vimeo, lien .mp4...)", key=f"vurl-{course['id']}",
+                                placeholder="https://...",
+                            )
+                            v_desc = st.text_area("Description (optionnel)", key=f"vdesc-{course['id']}", height=80)
+                            v_add = st.form_submit_button("🎬 Publier la vidéo")
+                        if v_add:
+                            if not v_title or not v_url:
+                                st.error("Le titre et l'URL de la vidéo sont requis.")
+                            else:
+                                conn = get_conn()
+                                n_lessons = conn.execute(
+                                    "SELECT COUNT(*) c FROM lessons WHERE module_id=?", (v_module["id"],)
+                                ).fetchone()["c"]
+                                conn.execute(
+                                    "INSERT INTO lessons(id,title,type,position,video_url,pdf_url,content,"
+                                    "duration_sec,module_id,resource_url) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                                    (new_id(), v_title, "VIDEO", n_lessons, v_url, None, v_desc or None,
+                                     None, v_module["id"], None),
+                                )
+                                conn.commit()
+                                conn.close()
+                                st.success(f"Vidéo publiée dans « {v_module['title']} » — visible immédiatement par les abonnés inscrits.")
+                                st.rerun()
+
+            st.markdown("---")
             for module in modules:
                 with st.expander(f"✏️ {module['title']}", expanded=False):
                     with st.form(f"edit_module_{module['id']}"):
