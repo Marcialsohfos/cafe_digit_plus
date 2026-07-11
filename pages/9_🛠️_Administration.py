@@ -224,9 +224,10 @@ with selected[TAB["📚 Cours & contenus"]]:
                         st.info("Créez d'abord un module (à gauche) pour pouvoir y ajouter une vidéo.")
                     else:
                         st.caption("Publiez directement une vidéo dans le module de votre choix.")
+                        modules_as_dicts = [dict(m) for m in modules]
                         with st.form(f"new_video_{course['id']}"):
                             v_module = st.selectbox(
-                                "Module", modules, format_func=lambda m: m["title"], key=f"vmod-{course['id']}",
+                                "Module", modules_as_dicts, format_func=lambda m: m["title"], key=f"vmod-{course['id']}",
                             )
                             v_title = st.text_input(
                                 "Titre de la vidéo (ex : « Vidéo d'introduction »)", key=f"vtitle-{course['id']}",
