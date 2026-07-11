@@ -245,7 +245,7 @@ with selected[TAB["📚 Cours & contenus"]]:
 # --------------------------------------------------------- Quiz & questions
 with selected[TAB["📝 Quiz & questions"]]:
     conn = get_conn()
-    all_courses = conn.execute("SELECT id, title FROM courses ORDER BY created_at DESC").fetchall()
+    all_courses = [dict(r) for r in conn.execute("SELECT id, title FROM courses ORDER BY created_at DESC").fetchall()]
     conn.close()
 
     with st.expander("➕ Créer un quiz pour un cours (nouveau ou existant)"):
@@ -256,9 +256,11 @@ with selected[TAB["📝 Quiz & questions"]]:
                 "Cours", all_courses, format_func=lambda c: c["title"], key="qc_course_select",
             )
             conn = get_conn()
-            qc_modules = conn.execute(
-                "SELECT * FROM modules WHERE course_id=? ORDER BY position", (qc_course["id"],)
-            ).fetchall()
+            qc_modules = [
+                dict(r) for r in conn.execute(
+                    "SELECT * FROM modules WHERE course_id=? ORDER BY position", (qc_course["id"],)
+                ).fetchall()
+            ]
             conn.close()
             if not qc_modules:
                 st.info("Ce cours n'a pas encore de module — ajoutez-en un dans « Cours & contenus ».")
