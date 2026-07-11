@@ -5,7 +5,7 @@ import streamlit as st
 
 from common import init_page, footer
 from db import get_conn, new_id, is_module_unlocked, add_submission, get_submissions
-from i18n import t
+from i18n import t, tf
 import auth
 
 init_page(t("Cours", "Courses"), icon="📚")
@@ -117,11 +117,13 @@ if not selected_slug:
         for i, c in enumerate(courses):
             with cols[i % 3]:
                 price = t("Gratuit", "Free") if c["price_fcfa"] == 0 else f"{c['price_fcfa']:,} FCFA".replace(",", " ")
+                c_title = tf(c, "title")
+                c_desc = tf(c, "description")
                 st.markdown(
                     f'<div class="cd-card">'
                     f'<span class="cd-badge">{c["pillar"]}</span>'
-                    f'<h3 style="margin:0.5rem 0 0.3rem;">{c["title"]}</h3>'
-                    f'<p style="font-size:0.85rem; color:rgba(30,42,36,0.65);">{c["description"][:140]}…</p>'
+                    f'<h3 style="margin:0.5rem 0 0.3rem;">{c_title}</h3>'
+                    f'<p style="font-size:0.85rem; color:rgba(30,42,36,0.65);">{c_desc[:140]}…</p>'
                     f'<div style="display:flex; justify-content:space-between; margin-top:0.6rem;">'
                     f'<span class="cd-pill">{c["level"]}</span>'
                     f'<span style="font-weight:600; color:#B4622B;">{price}</span></div></div>',
@@ -148,23 +150,23 @@ else:
             st.rerun()
 
         st.markdown(f'<span class="cd-badge">{course["pillar"]}</span>', unsafe_allow_html=True)
-        st.title(course["title"])
-        st.write(course["description"])
+        st.title(tf(course, "title"))
+        st.write(tf(course, "description"))
         if course["context"]:
             with st.expander(t("📖 Présentation du cours & objectifs", "📖 Course overview & objectives"), expanded=True):
-                st.markdown(course["context"])
+                st.markdown(tf(course, "context"))
 
         if course["final_project_text"] or course["certification_text"] or course["mentoring_text"]:
             with st.expander(t("🎓 Évaluation, accompagnement & certification", "🎓 Assessment, support & certification")):
                 if course["final_project_text"]:
                     st.markdown(f"**{t('🏁 Projet de fin d\'études (Fil Rouge)', '🏁 Final project (Capstone)')}**")
-                    st.write(course["final_project_text"])
+                    st.write(tf(course, "final_project_text"))
                 if course["certification_text"]:
                     st.markdown(f"**{t('📜 Certification Café_digit', '📜 Café_digit certification')}**")
-                    st.write(course["certification_text"])
+                    st.write(tf(course, "certification_text"))
                 if course["mentoring_text"]:
                     st.markdown(f"**{t('🤝 Espace Accompagnement (post-formation)', '🤝 Post-training support space')}**")
-                    st.write(course["mentoring_text"])
+                    st.write(tf(course, "mentoring_text"))
 
         c1, c2, c3 = st.columns([1, 1, 3])
         c1.markdown(f'<span class="cd-pill">{course["level"]}</span>', unsafe_allow_html=True)
@@ -197,9 +199,9 @@ else:
                     if user else block["module"]["position"] == 0
                 )
                 title_prefix = "" if module_unlocked else "🔒 "
-                st.markdown(f"**{title_prefix}{block['module']['title']}**")
+                st.markdown(f"**{title_prefix}{tf(block['module'], 'title')}**")
                 if block['module']['objective']:
-                    st.caption(block['module']['objective'])
+                    st.caption(tf(block['module'], 'objective'))
                 if not module_unlocked:
                     st.caption(t(
                         "🔒 Réussissez le quiz du module précédent pour déverrouiller ce module.",
@@ -208,7 +210,7 @@ else:
                 access_locked = (not is_free and not enrolled) or not module_unlocked
                 for l in block["lessons"]:
                     icon = "🔒" if access_locked else LESSON_ICON.get(l["type"], "•")
-                    if st.button(f"{icon} {l['title']}", key=f"les-{l['id']}", disabled=access_locked, use_container_width=True):
+                    if st.button(f"{icon} {tf(l, 'title')}", key=f"les-{l['id']}", disabled=access_locked, use_container_width=True):
                         st.session_state[lesson_key] = l["id"]
                         st.rerun()
                 for q in block["quizzes"]:
@@ -225,7 +227,7 @@ else:
             if not active_lesson:
                 st.info(t("Sélectionnez une leçon pour commencer.", "Select a lesson to get started."))
             else:
-                st.subheader(active_lesson["title"])
+                st.subheader(tf(active_lesson, "title"))
                 if active_lesson["type"] == "VIDEO":
                     if active_lesson["video_url"]:
                         st.video(active_lesson["video_url"])
@@ -240,21 +242,21 @@ else:
                     else:
                         st.info(t("PDF à venir.", "PDF coming soon."))
                 elif active_lesson["type"] == "TEXT":
-                    st.write(active_lesson["content"] or "")
+                    st.write(tf(active_lesson, "content"))
                 elif active_lesson["type"] == "R_SANDBOX":
-                    st.markdown(f'<div class="cd-mono">{active_lesson["content"] or ""}</div>', unsafe_allow_html=True)
+                    st.markdown(f'<div class="cd-mono">{tf(active_lesson, "content")}</div>', unsafe_allow_html=True)
                     st.caption(t(
                         "→ Testez ce code dans l'onglet Sandbox R du menu latéral.",
                         "→ Test this code in the R Sandbox tab from the side menu.",
                     ))
                 elif active_lesson["type"] == "RESOURCE":
-                    st.write(active_lesson["content"] or "")
+                    st.write(tf(active_lesson, "content"))
                     if active_lesson["resource_url"]:
                         st.markdown(f"[{t('📦 Télécharger la ressource', '📦 Download the resource')}]({active_lesson['resource_url']})")
                     else:
                         st.info(t("Ressource à venir.", "Resource coming soon."))
                 elif active_lesson["type"] == "LAB":
-                    st.write(active_lesson["content"] or "")
+                    st.write(tf(active_lesson, "content"))
                     if active_lesson["resource_url"]:
                         st.markdown(f"[{t('📎 Support du cas pratique', '📎 Case study handout')}]({active_lesson['resource_url']})")
 

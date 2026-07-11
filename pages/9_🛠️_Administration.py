@@ -96,6 +96,14 @@ with selected[TAB["📚 Cours & contenus"]]:
                 placeholder="Ex : Forum d'entraide pendant 3 mois après la formation, "
                             "sessions de mentorat mensuelles en direct (webinaires Q&R)...",
             )
+            st.markdown("###### 🇬🇧 Version anglaise (optionnelle)")
+            st.caption("À défaut de traduction saisie ici, le texte français s'affiche automatiquement côté EN.")
+            title_en = st.text_input("Title (EN)")
+            description_en = st.text_area("Short description (EN)")
+            context_en = st.text_area("Course overview & objectives (EN)", height=150)
+            final_project_en = st.text_area("Final project — Capstone (EN)", height=80)
+            certification_en = st.text_area("Certification (EN)", height=60)
+            mentoring_en = st.text_area("Post-training support (EN)", height=60)
             ok = st.form_submit_button("Créer le cours")
         if ok:
             if not title or not description:
@@ -110,11 +118,15 @@ with selected[TAB["📚 Cours & contenus"]]:
                 conn.execute(
                     "INSERT INTO courses(id,title,slug,description,context,pillar,level,price_fcfa,"
                     "is_premium_only,cover_image_url,published,author_id,created_at,"
-                    "final_project_text,certification_text,mentoring_text) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "final_project_text,certification_text,mentoring_text,"
+                    "title_en,description_en,context_en,final_project_text_en,"
+                    "certification_text_en,mentoring_text_en) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (new_id(), title, slug, description, context or None, pillar, level, int(price),
                      int(premium_only), None, int(published), user["id"], datetime.utcnow().isoformat(),
-                     final_project or None, certification or None, mentoring or None),
+                     final_project or None, certification or None, mentoring or None,
+                     title_en or None, description_en or None, context_en or None,
+                     final_project_en or None, certification_en or None, mentoring_en or None),
                 )
                 conn.commit()
                 conn.close()
@@ -149,6 +161,22 @@ with selected[TAB["📚 Cours & contenus"]]:
                     "🤝 Espace Accompagnement (post-formation)",
                     value=course["mentoring_text"] or "", height=80,
                 )
+                st.markdown("###### 🇬🇧 Version anglaise (optionnelle)")
+                st.caption("À défaut de traduction saisie ici, le texte français s'affiche automatiquement côté EN.")
+                e_title_en = st.text_input("Title (EN)", value=course["title_en"] or "")
+                e_desc_en = st.text_area("Short description (EN)", value=course["description_en"] or "")
+                e_context_en = st.text_area(
+                    "Course overview & objectives (EN)", value=course["context_en"] or "", height=150,
+                )
+                e_final_project_en = st.text_area(
+                    "Final project — Capstone (EN)", value=course["final_project_text_en"] or "", height=80,
+                )
+                e_certification_en = st.text_area(
+                    "Certification (EN)", value=course["certification_text_en"] or "", height=60,
+                )
+                e_mentoring_en = st.text_area(
+                    "Post-training support (EN)", value=course["mentoring_text_en"] or "", height=60,
+                )
                 col_a, col_b = st.columns(2)
                 save = col_a.form_submit_button("💾 Enregistrer")
                 delete = col_b.form_submit_button("🗑️ Supprimer le cours")
@@ -156,9 +184,14 @@ with selected[TAB["📚 Cours & contenus"]]:
                 conn = get_conn()
                 conn.execute(
                     "UPDATE courses SET title=?, description=?, context=?, price_fcfa=?, is_premium_only=?, "
-                    "published=?, final_project_text=?, certification_text=?, mentoring_text=? WHERE id=?",
+                    "published=?, final_project_text=?, certification_text=?, mentoring_text=?, "
+                    "title_en=?, description_en=?, context_en=?, final_project_text_en=?, "
+                    "certification_text_en=?, mentoring_text_en=? WHERE id=?",
                     (e_title, e_desc, e_context or None, int(e_price), int(e_premium), int(e_pub),
-                     e_final_project or None, e_certification or None, e_mentoring or None, course["id"]),
+                     e_final_project or None, e_certification or None, e_mentoring or None,
+                     e_title_en or None, e_desc_en or None, e_context_en or None,
+                     e_final_project_en or None, e_certification_en or None, e_mentoring_en or None,
+                     course["id"]),
                 )
                 conn.commit()
                 conn.close()
@@ -201,6 +234,12 @@ with selected[TAB["📚 Cours & contenus"]]:
                             "réussite du quiz du module précédent",
                             key=f"mdrip-{course['id']}",
                         )
+                        m_title_en = st.text_input(
+                            "🇬🇧 Module title (EN, optional)", key=f"mtitle_en-{course['id']}",
+                        )
+                        m_objective_en = st.text_area(
+                            "🇬🇧 Module objective (EN, optional)", key=f"mobj_en-{course['id']}", height=60,
+                        )
                         m_add = st.form_submit_button("➕ Ajouter le module")
                     if m_add:
                         if not m_title:
@@ -208,9 +247,10 @@ with selected[TAB["📚 Cours & contenus"]]:
                         else:
                             conn = get_conn()
                             conn.execute(
-                                "INSERT INTO modules(id,title,objective,position,course_id,requires_prior_quiz) "
-                                "VALUES (?,?,?,?,?,?)",
-                                (new_id(), m_title, m_objective or None, len(modules), course["id"], int(m_drip)),
+                                "INSERT INTO modules(id,title,objective,position,course_id,requires_prior_quiz,"
+                                "title_en,objective_en) VALUES (?,?,?,?,?,?,?,?)",
+                                (new_id(), m_title, m_objective or None, len(modules), course["id"], int(m_drip),
+                                 m_title_en or None, m_objective_en or None),
                             )
                             conn.commit()
                             conn.close()
@@ -237,6 +277,12 @@ with selected[TAB["📚 Cours & contenus"]]:
                                 placeholder="https://...",
                             )
                             v_desc = st.text_area("Description (optionnel)", key=f"vdesc-{course['id']}", height=80)
+                            v_title_en = st.text_input(
+                                "🇬🇧 Video title (EN, optional)", key=f"vtitle_en-{course['id']}",
+                            )
+                            v_desc_en = st.text_area(
+                                "🇬🇧 Description (EN, optional)", key=f"vdesc_en-{course['id']}", height=60,
+                            )
                             v_add = st.form_submit_button("🎬 Publier la vidéo")
                         if v_add:
                             if not v_title or not v_url:
@@ -248,9 +294,10 @@ with selected[TAB["📚 Cours & contenus"]]:
                                 ).fetchone()["c"]
                                 conn.execute(
                                     "INSERT INTO lessons(id,title,type,position,video_url,pdf_url,content,"
-                                    "duration_sec,module_id,resource_url) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                                    "duration_sec,module_id,resource_url,title_en,content_en) "
+                                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                                     (new_id(), v_title, "VIDEO", n_lessons, v_url, None, v_desc or None,
-                                     None, v_module["id"], None),
+                                     None, v_module["id"], None, v_title_en or None, v_desc_en or None),
                                 )
                                 conn.commit()
                                 conn.close()
@@ -271,11 +318,23 @@ with selected[TAB["📚 Cours & contenus"]]:
                             "réussite du quiz du module précédent",
                             value=bool(module["requires_prior_quiz"]), key=f"emdrip-{module['id']}",
                         )
+                        em_title_en = st.text_input(
+                            "🇬🇧 Module title (EN, optional)", value=module["title_en"] or "",
+                            key=f"emt_en-{module['id']}",
+                        )
+                        em_obj_en = st.text_area(
+                            "🇬🇧 Module objective (EN, optional)", value=module["objective_en"] or "",
+                            key=f"emo_en-{module['id']}", height=60,
+                        )
                         em_save = st.form_submit_button("💾 Enregistrer le module")
                     if em_save:
                         conn = get_conn()
-                        conn.execute("UPDATE modules SET title=?, objective=?, requires_prior_quiz=? WHERE id=?",
-                                     (em_title, em_obj or None, int(em_drip), module["id"]))
+                        conn.execute(
+                            "UPDATE modules SET title=?, objective=?, requires_prior_quiz=?, "
+                            "title_en=?, objective_en=? WHERE id=?",
+                            (em_title, em_obj or None, int(em_drip),
+                             em_title_en or None, em_obj_en or None, module["id"]),
+                        )
                         conn.commit()
                         conn.close()
                         st.rerun()
@@ -325,6 +384,13 @@ with selected[TAB["📚 Cours & contenus"]]:
                                 "🔗 Lien du fichier téléchargeable (script .R/.py/.do, guide d'installation...)",
                                 value=l["resource_url"] or "", key=f"elr-{l['id']}",
                             )
+                            el_title_en = st.text_input(
+                                "🇬🇧 Title (EN, optional)", value=l["title_en"] or "", key=f"elt_en-{l['id']}",
+                            )
+                            el_content_en = st.text_area(
+                                "🇬🇧 Content / description (EN, optional)",
+                                value=l["content_en"] or "", key=f"elc_en-{l['id']}",
+                            )
                             ecol1, ecol2 = st.columns(2)
                             el_save = ecol1.form_submit_button("💾 Enregistrer")
                             el_delete = ecol2.form_submit_button("🗑️ Supprimer")
@@ -332,12 +398,12 @@ with selected[TAB["📚 Cours & contenus"]]:
                             conn = get_conn()
                             conn.execute(
                                 "UPDATE lessons SET title=?, type=?, content=?, video_url=?, pdf_url=?, "
-                                "resource_url=? WHERE id=?",
+                                "resource_url=?, title_en=?, content_en=? WHERE id=?",
                                 (
                                     el_title, el_type, el_content or None,
                                     el_url if el_type == "VIDEO" else None,
                                     el_url if el_type == "PDF" else None,
-                                    el_resource or None, l["id"],
+                                    el_resource or None, el_title_en or None, el_content_en or None, l["id"],
                                 ),
                             )
                             conn.commit()
@@ -376,15 +442,21 @@ with selected[TAB["📚 Cours & contenus"]]:
                         key=f"lr-{module['id']}",
                         placeholder="https://... (ex : dépôt GitHub, Google Drive partagé, etc.)",
                     )
+                    lt_en = st.text_input(
+                        "🇬🇧 Title (EN, optional)", key=f"lt_en-{module['id']}",
+                    )
+                    lc_en = st.text_area(
+                        "🇬🇧 Content / description (EN, optional)", key=f"lc_en-{module['id']}",
+                    )
                     ladd = st.form_submit_button("➕ Ajouter le contenu")
                 if ladd and lt:
                     conn = get_conn()
                     conn.execute(
                         "INSERT INTO lessons(id,title,type,position,video_url,pdf_url,content,duration_sec,"
-                        "module_id,resource_url) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                        "module_id,resource_url,title_en,content_en) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                         (new_id(), lt, ltype, len(lessons),
                          lurl if ltype == "VIDEO" else None, lurl if ltype == "PDF" else None,
-                         lcontent, None, module["id"], lresource or None),
+                         lcontent, None, module["id"], lresource or None, lt_en or None, lc_en or None),
                     )
                     conn.commit()
                     conn.close()
