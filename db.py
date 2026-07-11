@@ -186,6 +186,25 @@ CREATE TABLE IF NOT EXISTS sandbox_examples (
     author_id TEXT,
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS submissions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    course_id TEXT NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+    module_id TEXT REFERENCES modules(id) ON DELETE CASCADE,
+    lesson_id TEXT REFERENCES lessons(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL DEFAULT 'LAB',
+    title TEXT NOT NULL,
+    file_name TEXT,
+    file_content TEXT,
+    comment TEXT,
+    status TEXT NOT NULL DEFAULT 'SUBMITTED',
+    grade TEXT,
+    feedback TEXT,
+    created_at TEXT NOT NULL,
+    reviewed_at TEXT,
+    reviewed_by TEXT
+);
 """
 
 # Colonnes ajoutées après la première version du schéma : on les ajoute par
@@ -197,6 +216,14 @@ _MIGRATIONS = [
     "ALTER TABLE quiz_attempts ADD COLUMN total_points INTEGER",
     "ALTER TABLE subscriptions ADD COLUMN validated_by TEXT",
     "ALTER TABLE subscriptions ADD COLUMN validated_at TEXT",
+    # 🎓 Évaluation, accompagnement & certification (au niveau du cours)
+    "ALTER TABLE courses ADD COLUMN final_project_text TEXT",
+    "ALTER TABLE courses ADD COLUMN certification_text TEXT",
+    "ALTER TABLE courses ADD COLUMN mentoring_text TEXT",
+    # 📶 Suivi de progression (Drip Content) au niveau du module
+    "ALTER TABLE modules ADD COLUMN requires_prior_quiz INTEGER NOT NULL DEFAULT 0",
+    # 📦 Ressource téléchargeable (script .R/.py/.do) attachée à une leçon
+    "ALTER TABLE lessons ADD COLUMN resource_url TEXT",
 ]
 
 
@@ -359,6 +386,92 @@ def delete_sandbox_example(example_id):
     conn.execute("DELETE FROM sandbox_examples WHERE id=?", (example_id,))
     conn.commit()
     conn.close()
+
+
+# ---------------------------------------------------- Dépôts (submissions)
+
+
+def add_submission(user_id, course_id, title, kind="LAB", module_id=None, lesson_id=None,
+                    file_name=None, file_content=None, comment=None):
+    conn = get_conn()
+    conn.execute(
+        "INSERT INTO submissions(id,user_id,course_id,module_id,lesson_id,kind,title,file_name,"
+        "file_content,comment,status,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        (new_id(), user_id, course_id, module_id, lesson_id, kind, title, file_name,
+         file_content, comment, "SUBMITTED", datetime.utcnow().isoformat()),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_submissions(course_id=None, user_id=None, status=None):
+    conn = get_conn()
+    q = (
+        "SELECT s.*, u.full_name, u.email, c.title as course_title FROM submissions s "
+        "JOIN users u ON s.user_id=u.id JOIN courses c ON s.course_id=c.id WHERE 1=1"
+    )
+    params = []
+    if course_id:
+        q += " AND s.course_id=?"
+        params.append(course_id)
+    if user_id:
+        q += " AND s.user_id=?"
+        params.append(user_id)
+    if status:
+        q += " AND s.status=?"
+        params.append(status)
+    q += " ORDER BY s.created_at DESC"
+    rows = conn.execute(q, params).fetchall()
+    conn.close()
+    return rows
+
+
+def review_submission(submission_id, status, grade, feedback, admin_id):
+    conn = get_conn()
+    conn.execute(
+        "UPDATE submissions SET status=?, grade=?, feedback=?, reviewed_at=?, reviewed_by=? WHERE id=?",
+        (status, grade or None, feedback or None, datetime.utcnow().isoformat(), admin_id, submission_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def is_module_unlocked(user_id, course_id, module_position):
+    """Suivi de progression (Drip Content) : un module verrouillé n'est
+    accessible qu'après réussite du quiz du module précédent."""
+    if module_position <= 0:
+        return True
+    conn = get_conn()
+    current = conn.execute(
+        "SELECT requires_prior_quiz FROM modules WHERE course_id=? AND position=?",
+        (course_id, module_position),
+    ).fetchone()
+    if not current or not current["requires_prior_quiz"]:
+        conn.close()
+        return True
+    prev_module = conn.execute(
+        "SELECT id FROM modules WHERE course_id=? AND position=?",
+        (course_id, module_position - 1),
+    ).fetchone()
+    if not prev_module:
+        conn.close()
+        return True
+    prev_quizzes = conn.execute(
+        "SELECT id FROM quizzes WHERE module_id=? AND published=1", (prev_module["id"],)
+    ).fetchall()
+    if not prev_quizzes:
+        conn.close()
+        return True
+    for q in prev_quizzes:
+        passed = conn.execute(
+            "SELECT 1 FROM quiz_attempts WHERE user_id=? AND quiz_id=? AND passed=1 LIMIT 1",
+            (user_id, q["id"]),
+        ).fetchone()
+        if not passed:
+            conn.close()
+            return False
+    conn.close()
+    return True
 
 
 # ------------------------------------------------------ Suivi quiz / cours
