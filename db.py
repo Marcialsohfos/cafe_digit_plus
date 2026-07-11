@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS courses (
     title TEXT NOT NULL,
     slug TEXT UNIQUE NOT NULL,
     description TEXT NOT NULL,
+    context TEXT,
     pillar TEXT NOT NULL DEFAULT 'Modélisation mathématique',
     level TEXT NOT NULL DEFAULT 'Débutant',
     price_fcfa INTEGER NOT NULL DEFAULT 0,
@@ -78,6 +79,7 @@ CREATE TABLE IF NOT EXISTS courses (
 CREATE TABLE IF NOT EXISTS modules (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
+    objective TEXT,
     position INTEGER NOT NULL DEFAULT 0,
     course_id TEXT NOT NULL REFERENCES courses(id) ON DELETE CASCADE
 );
@@ -170,15 +172,48 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     started_at TEXT NOT NULL,
     expires_at TEXT,
     amount_fcfa INTEGER NOT NULL DEFAULT 0,
-    payment_ref TEXT
+    payment_ref TEXT,
+    validated_by TEXT,
+    validated_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS sandbox_examples (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    description TEXT,
+    code TEXT NOT NULL,
+    published INTEGER NOT NULL DEFAULT 1,
+    author_id TEXT,
+    created_at TEXT NOT NULL
 );
 """
+
+# Colonnes ajoutées après la première version du schéma : on les ajoute par
+# migration légère (ALTER TABLE) pour ne pas casser les bases déjà déployées.
+_MIGRATIONS = [
+    "ALTER TABLE courses ADD COLUMN context TEXT",
+    "ALTER TABLE modules ADD COLUMN objective TEXT",
+    "ALTER TABLE quiz_attempts ADD COLUMN earned_points INTEGER",
+    "ALTER TABLE quiz_attempts ADD COLUMN total_points INTEGER",
+    "ALTER TABLE subscriptions ADD COLUMN validated_by TEXT",
+    "ALTER TABLE subscriptions ADD COLUMN validated_at TEXT",
+]
+
+
+def _run_migrations(conn):
+    for stmt in _MIGRATIONS:
+        try:
+            conn.execute(stmt)
+        except sqlite3.OperationalError:
+            pass  # colonne déjà présente
+    conn.commit()
 
 
 def init_db():
     conn = get_conn()
     conn.executescript(SCHEMA)
     conn.commit()
+    _run_migrations(conn)
 
     # Paramètres publics par défaut
     for k, v in DEFAULT_SETTINGS.items():
@@ -291,3 +326,93 @@ def set_setting(key, value):
     )
     conn.commit()
     conn.close()
+
+
+# --------------------------------------------------------------- Sandbox R
+
+
+def get_sandbox_examples(published_only=True):
+    conn = get_conn()
+    if published_only:
+        rows = conn.execute(
+            "SELECT * FROM sandbox_examples WHERE published=1 ORDER BY created_at DESC"
+        ).fetchall()
+    else:
+        rows = conn.execute("SELECT * FROM sandbox_examples ORDER BY created_at DESC").fetchall()
+    conn.close()
+    return rows
+
+
+def add_sandbox_example(title, description, code, author_id, published=True):
+    conn = get_conn()
+    conn.execute(
+        "INSERT INTO sandbox_examples(id,title,description,code,published,author_id,created_at) "
+        "VALUES (?,?,?,?,?,?,?)",
+        (new_id(), title, description, code, int(published), author_id, datetime.utcnow().isoformat()),
+    )
+    conn.commit()
+    conn.close()
+
+
+def delete_sandbox_example(example_id):
+    conn = get_conn()
+    conn.execute("DELETE FROM sandbox_examples WHERE id=?", (example_id,))
+    conn.commit()
+    conn.close()
+
+
+# ------------------------------------------------------ Suivi quiz / cours
+
+
+def get_course_quiz_summary(user_id, course_id):
+    """Nombre total de bonnes réponses trouvées par l'apprenant pour un cours
+    donné, en comptant la meilleure tentative pour chaque quiz du cours."""
+    conn = get_conn()
+    quizzes = conn.execute(
+        "SELECT q.id FROM quizzes q JOIN modules m ON q.module_id=m.id WHERE m.course_id=?",
+        (course_id,),
+    ).fetchall()
+    total_correct, total_possible, quizzes_passed = 0, 0, 0
+    for q in quizzes:
+        best = conn.execute(
+            "SELECT * FROM quiz_attempts WHERE user_id=? AND quiz_id=? "
+            "ORDER BY score_pct DESC, submitted_at DESC LIMIT 1",
+            (user_id, q["id"]),
+        ).fetchone()
+        if best:
+            total_correct += best["earned_points"] or 0
+            total_possible += best["total_points"] or 0
+            if best["passed"]:
+                quizzes_passed += 1
+    conn.close()
+    return {
+        "total_correct": total_correct,
+        "total_possible": total_possible,
+        "quizzes_total": len(quizzes),
+        "quizzes_passed": quizzes_passed,
+    }
+
+
+# ------------------------------------------------------ Validation manuelle
+
+
+def validate_subscription_by_email(email, plan, payment_ref, amount_fcfa, admin_id, duration_days=30):
+    """Utilisé par le Super Admin / Admin pour valider un abonnement (ex.
+    Premium) en saisissant directement l'e-mail de l'abonné et sa référence
+    de paiement. Active immédiatement l'accès à l'espace correspondant."""
+    conn = get_conn()
+    user_row = conn.execute("SELECT * FROM users WHERE email=?", (email.strip().lower(),)).fetchone()
+    if not user_row:
+        conn.close()
+        return None, "Aucun compte trouvé avec cet e-mail. Vérifiez l'orthographe ou demandez à l'abonné de créer son compte."
+    now = datetime.utcnow().isoformat()
+    expires = (datetime.utcnow() + timedelta(days=duration_days)).isoformat() if duration_days else None
+    conn.execute(
+        "INSERT INTO subscriptions(id,user_id,plan,status,started_at,expires_at,amount_fcfa,payment_ref,"
+        "validated_by,validated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (new_id(), user_row["id"], plan, "ACTIVE", now, expires, int(amount_fcfa), payment_ref or None,
+         admin_id, now),
+    )
+    conn.commit()
+    conn.close()
+    return dict(user_row), None

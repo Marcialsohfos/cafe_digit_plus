@@ -82,8 +82,10 @@ if result_key not in st.session_state:
 
         conn = get_conn()
         conn.execute(
-            "INSERT INTO quiz_attempts(id,user_id,quiz_id,answers,score_pct,passed,submitted_at) VALUES (?,?,?,?,?,?,?)",
-            (new_id(), user["id"], quiz_id, json.dumps(answers), score_pct, int(passed), datetime.utcnow().isoformat()),
+            "INSERT INTO quiz_attempts(id,user_id,quiz_id,answers,score_pct,passed,submitted_at,"
+            "earned_points,total_points) VALUES (?,?,?,?,?,?,?,?,?)",
+            (new_id(), user["id"], quiz_id, json.dumps(answers), score_pct, int(passed),
+             datetime.utcnow().isoformat(), earned, total),
         )
         conn.commit()
         conn.close()

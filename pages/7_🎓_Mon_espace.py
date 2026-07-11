@@ -1,7 +1,7 @@
 import streamlit as st
 
 from common import init_page, footer
-from db import get_conn
+from db import get_conn, get_course_quiz_summary
 import auth
 
 init_page("Mon espace", icon="🎓")
@@ -35,11 +35,20 @@ else:
     cols = st.columns(2)
     for i, e in enumerate(enrollments):
         with cols[i % 2]:
+            summary = get_course_quiz_summary(user["id"], e["course_id"])
+            quiz_line = ""
+            if summary["quizzes_total"]:
+                quiz_line = (
+                    f'<p style="font-size:0.75rem; color:rgba(30,42,36,0.6); margin-top:0.2rem;">'
+                    f'✅ {summary["total_correct"]}/{summary["total_possible"]} bonnes réponses trouvées · '
+                    f'{summary["quizzes_passed"]}/{summary["quizzes_total"]} quiz réussis</p>'
+                )
             st.markdown(
                 f'<div class="cd-card"><b>{e["title"]}</b>'
                 f'<div style="background:rgba(42,27,18,0.1); border-radius:999px; height:8px; margin-top:0.5rem;">'
                 f'<div style="background:#B4622B; width:{e["progress_pct"]}%; height:8px; border-radius:999px;"></div></div>'
-                f'<p style="font-size:0.75rem; color:rgba(30,42,36,0.5); margin-top:0.3rem;">{e["progress_pct"]}% complété</p></div>',
+                f'<p style="font-size:0.75rem; color:rgba(30,42,36,0.5); margin-top:0.3rem;">{e["progress_pct"]}% complété</p>'
+                f'{quiz_line}</div>',
                 unsafe_allow_html=True,
             )
             if st.button("Continuer →", key=f"cont-{e['id']}"):

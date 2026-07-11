@@ -142,6 +142,9 @@ else:
         st.markdown(f'<span class="cd-badge">{course["pillar"]}</span>', unsafe_allow_html=True)
         st.title(course["title"])
         st.write(course["description"])
+        if course["context"]:
+            with st.expander("📖 Présentation du cours & objectifs", expanded=True):
+                st.markdown(course["context"])
 
         c1, c2, c3 = st.columns([1, 1, 3])
         c1.markdown(f'<span class="cd-pill">{course["level"]}</span>', unsafe_allow_html=True)
@@ -170,6 +173,8 @@ else:
         with left:
             for block in module_data:
                 st.markdown(f"**{block['module']['title']}**")
+                if block['module']['objective']:
+                    st.caption(block['module']['objective'])
                 locked = not is_free and not enrolled
                 for l in block["lessons"]:
                     icon = "🔒" if locked else LESSON_ICON.get(l["type"], "•")

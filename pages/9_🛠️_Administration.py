@@ -4,7 +4,11 @@ from datetime import datetime
 import streamlit as st
 
 from common import init_page, footer
-from db import get_conn, new_id, get_settings, set_setting
+from db import (
+    get_conn, new_id, get_settings, set_setting,
+    get_sandbox_examples, add_sandbox_example, delete_sandbox_example,
+    validate_subscription_by_email, PLAN_PRICES_FCFA,
+)
 import auth
 
 init_page("Administration", icon="🛠️")
@@ -28,14 +32,15 @@ def slugify(text):
 
 
 tabs = ["📊 Tableau de bord", "📚 Cours & contenus", "📝 Quiz & questions",
-        "👥 Utilisateurs", "💳 Paiements", "✉️ Support", "⚙️ Paramètres"]
+        "🧪 Sandbox R", "👥 Utilisateurs", "💳 Paiements", "✉️ Support", "⚙️ Paramètres"]
 if auth.is_super_admin():
     tabs.append("🛡️ Gestion des admins")
 
 selected = st.tabs(tabs)
+TAB = {name: i for i, name in enumerate(tabs)}
 
 # ---------------------------------------------------------------- Dashboard
-with selected[0]:
+with selected[TAB["📊 Tableau de bord"]]:
     conn = get_conn()
     n_users = conn.execute("SELECT COUNT(*) c FROM users WHERE role='STUDENT'").fetchone()["c"]
     n_courses = conn.execute("SELECT COUNT(*) c FROM courses").fetchone()["c"]
@@ -53,7 +58,7 @@ with selected[0]:
     c6.metric("Tickets support ouverts", n_tickets_new)
 
 # --------------------------------------------------------- Cours & contenus
-with selected[1]:
+with selected[TAB["📚 Cours & contenus"]]:
     conn = get_conn()
     courses = conn.execute("SELECT * FROM courses ORDER BY created_at DESC").fetchall()
     conn.close()
@@ -61,7 +66,14 @@ with selected[1]:
     with st.expander("➕ Créer un nouveau cours"):
         with st.form("new_course"):
             title = st.text_input("Titre *")
-            description = st.text_area("Description *")
+            description = st.text_area("Description courte *", help="Résumé affiché dans le catalogue.")
+            context = st.text_area(
+                "Présentation du cours & objectifs (contexte)", height=180,
+                placeholder=(
+                    "Ex : Objectifs de la formation, public visé, prérequis, équipe pédagogique, "
+                    "ressources d'installation... Ce texte s'affiche en tête de la page du cours."
+                ),
+            )
             pillar = st.selectbox("Pilier", ["Modélisation mathématique", "Intelligence artificielle", "Big Data", "Cas pratiques"])
             level = st.selectbox("Niveau", ["Débutant", "Intermédiaire", "Avancé"])
             price = st.number_input("Prix (FCFA, 0 = gratuit)", min_value=0, step=1000, value=0)
@@ -79,10 +91,11 @@ with selected[1]:
                     slug = f"{base_slug}-{n}"
                     n += 1
                 conn.execute(
-                    "INSERT INTO courses(id,title,slug,description,pillar,level,price_fcfa,is_premium_only,"
-                    "cover_image_url,published,author_id,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (new_id(), title, slug, description, pillar, level, int(price), int(premium_only),
-                     None, int(published), user["id"], datetime.utcnow().isoformat()),
+                    "INSERT INTO courses(id,title,slug,description,context,pillar,level,price_fcfa,"
+                    "is_premium_only,cover_image_url,published,author_id,created_at) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (new_id(), title, slug, description, context or None, pillar, level, int(price),
+                     int(premium_only), None, int(published), user["id"], datetime.utcnow().isoformat()),
                 )
                 conn.commit()
                 conn.close()
@@ -96,7 +109,11 @@ with selected[1]:
         with st.expander(f"{'✅' if course['published'] else '🚧'} {course['title']}  ·  {course['pillar']}"):
             with st.form(f"edit_course_{course['id']}"):
                 e_title = st.text_input("Titre", value=course["title"])
-                e_desc = st.text_area("Description", value=course["description"])
+                e_desc = st.text_area("Description courte", value=course["description"])
+                e_context = st.text_area(
+                    "Présentation du cours & objectifs (contexte)",
+                    value=course["context"] or "", height=180,
+                )
                 e_price = st.number_input("Prix (FCFA)", min_value=0, step=1000, value=course["price_fcfa"])
                 e_premium = st.checkbox("Réservé Premium", value=bool(course["is_premium_only"]))
                 e_pub = st.checkbox("Publié", value=bool(course["published"]))
@@ -106,8 +123,9 @@ with selected[1]:
             if save:
                 conn = get_conn()
                 conn.execute(
-                    "UPDATE courses SET title=?, description=?, price_fcfa=?, is_premium_only=?, published=? WHERE id=?",
-                    (e_title, e_desc, int(e_price), int(e_premium), int(e_pub), course["id"]),
+                    "UPDATE courses SET title=?, description=?, context=?, price_fcfa=?, is_premium_only=?, "
+                    "published=? WHERE id=?",
+                    (e_title, e_desc, e_context or None, int(e_price), int(e_premium), int(e_pub), course["id"]),
                 )
                 conn.commit()
                 conn.close()
@@ -127,17 +145,38 @@ with selected[1]:
             conn.close()
 
             with st.form(f"new_module_{course['id']}"):
-                m_title = st.text_input("Titre du nouveau module", key=f"mtitle-{course['id']}")
+                m_title = st.text_input("Titre du nouveau module (ex : Module 1 — ...)", key=f"mtitle-{course['id']}")
+                m_objective = st.text_area(
+                    "Objectif du module (canevas court : « Objectif : ... »)",
+                    key=f"mobj-{course['id']}", height=80,
+                )
                 m_add = st.form_submit_button("➕ Ajouter un module")
             if m_add and m_title:
                 conn = get_conn()
-                conn.execute("INSERT INTO modules(id,title,position,course_id) VALUES (?,?,?,?)",
-                             (new_id(), m_title, len(modules), course["id"]))
+                conn.execute("INSERT INTO modules(id,title,objective,position,course_id) VALUES (?,?,?,?,?)",
+                             (new_id(), m_title, m_objective or None, len(modules), course["id"]))
                 conn.commit()
                 conn.close()
                 st.rerun()
 
             for module in modules:
+                with st.expander(f"✏️ {module['title']}", expanded=False):
+                    with st.form(f"edit_module_{module['id']}"):
+                        em_title = st.text_input("Titre du module", value=module["title"], key=f"emt-{module['id']}")
+                        em_obj = st.text_area(
+                            "Objectif du module", value=module["objective"] or "",
+                            key=f"emo-{module['id']}", height=80,
+                        )
+                        em_save = st.form_submit_button("💾 Enregistrer le module")
+                    if em_save:
+                        conn = get_conn()
+                        conn.execute("UPDATE modules SET title=?, objective=? WHERE id=?",
+                                     (em_title, em_obj or None, module["id"]))
+                        conn.commit()
+                        conn.close()
+                        st.rerun()
+                if module["objective"]:
+                    st.caption(f"🎯 {module['objective']}")
                 st.markdown(f"**{module['title']}**")
                 conn = get_conn()
                 lessons = conn.execute("SELECT * FROM lessons WHERE module_id=? ORDER BY position", (module["id"],)).fetchall()
@@ -204,15 +243,58 @@ with selected[1]:
                 st.markdown("---")
 
 # --------------------------------------------------------- Quiz & questions
-with selected[2]:
+with selected[TAB["📝 Quiz & questions"]]:
+    conn = get_conn()
+    all_courses = conn.execute("SELECT id, title FROM courses ORDER BY created_at DESC").fetchall()
+    conn.close()
+
+    with st.expander("➕ Créer un quiz pour un cours (nouveau ou existant)"):
+        if not all_courses:
+            st.info("Créez d'abord un cours dans l'onglet « Cours & contenus ».")
+        else:
+            qc_course = st.selectbox(
+                "Cours", all_courses, format_func=lambda c: c["title"], key="qc_course_select",
+            )
+            conn = get_conn()
+            qc_modules = conn.execute(
+                "SELECT * FROM modules WHERE course_id=? ORDER BY position", (qc_course["id"],)
+            ).fetchall()
+            conn.close()
+            if not qc_modules:
+                st.info("Ce cours n'a pas encore de module — ajoutez-en un dans « Cours & contenus ».")
+            else:
+                with st.form("quick_new_quiz"):
+                    qc_module = st.selectbox("Module", qc_modules, format_func=lambda m: m["title"])
+                    qc_title = st.text_input("Titre du quiz")
+                    qc_pass = st.number_input("Seuil de réussite (%)", 0, 100, 60)
+                    qc_submit = st.form_submit_button("➕ Créer le quiz")
+                if qc_submit and qc_title:
+                    conn = get_conn()
+                    conn.execute(
+                        "INSERT INTO quizzes(id,title,module_id,pass_score_pct,published,created_at) VALUES (?,?,?,?,?,?)",
+                        (new_id(), qc_title, qc_module["id"], int(qc_pass), 1, datetime.utcnow().isoformat()),
+                    )
+                    conn.commit()
+                    conn.close()
+                    st.success("Quiz créé — ajoutez maintenant ses questions ci-dessous.")
+                    st.rerun()
+
+    st.markdown("---")
     conn = get_conn()
     quizzes = conn.execute(
         "SELECT q.*, m.title as module_title, c.title as course_title FROM quizzes q "
         "JOIN modules m ON q.module_id=m.id JOIN courses c ON m.course_id=c.id ORDER BY q.created_at DESC"
     ).fetchall()
     conn.close()
+
+    course_filter = st.selectbox(
+        "Filtrer par cours", ["Tous les cours"] + [c["title"] for c in all_courses], key="quiz_course_filter",
+    )
+    if course_filter != "Tous les cours":
+        quizzes = [q for q in quizzes if q["course_title"] == course_filter]
+
     if not quizzes:
-        st.info("Aucun quiz n'a encore été créé. Ajoutez-en un depuis l'onglet « Cours & contenus ».")
+        st.info("Aucun quiz pour ce filtre. Créez-en un ci-dessus ou depuis l'onglet « Cours & contenus ».")
     for quiz in quizzes:
         with st.expander(f"📝 {quiz['title']} — {quiz['course_title']} / {quiz['module_title']}"):
             conn = get_conn()
@@ -275,8 +357,45 @@ with selected[2]:
                 conn.close()
                 st.rerun()
 
+# ------------------------------------------------------------------ Sandbox R
+with selected[TAB["🧪 Sandbox R"]]:
+    st.caption(
+        "Chargez ici de nouveaux exemples d'applications R qui apparaîtront directement "
+        "dans la page Sandbox R, prêts à être exécutés par les apprenants."
+    )
+    with st.expander("➕ Ajouter un nouvel exemple"):
+        with st.form("new_sandbox_example"):
+            sb_title = st.text_input("Titre de l'exemple *", placeholder="Ex : Régression logistique — risque de rechute")
+            sb_desc = st.text_area("Description courte (affichée sous le bouton)")
+            sb_code = st.text_area(
+                "Code R *", height=220,
+                placeholder="# Collez ici le script R de démonstration\n...",
+            )
+            sb_pub = st.checkbox("Publier immédiatement", value=True)
+            sb_add = st.form_submit_button("➕ Ajouter l'exemple")
+        if sb_add:
+            if not sb_title or not sb_code.strip():
+                st.error("Titre et code R sont requis.")
+            else:
+                add_sandbox_example(sb_title, sb_desc, sb_code, user["id"], published=sb_pub)
+                st.success("Exemple ajouté à la Sandbox R.")
+                st.rerun()
+
+    st.markdown("---")
+    examples = get_sandbox_examples(published_only=False)
+    if not examples:
+        st.info("Aucun exemple personnalisé pour le moment — les deux exemples par défaut restent visibles.")
+    for ex in examples:
+        with st.expander(f"{'✅' if ex['published'] else '🚧'} {ex['title']}"):
+            st.markdown(f'<div class="cd-mono">{ex["code"]}</div>', unsafe_allow_html=True)
+            if ex["description"]:
+                st.caption(ex["description"])
+            if st.button("🗑️ Supprimer", key=f"delsbex-{ex['id']}"):
+                delete_sandbox_example(ex["id"])
+                st.rerun()
+
 # ------------------------------------------------------------- Utilisateurs
-with selected[3]:
+with selected[TAB["👥 Utilisateurs"]]:
     conn = get_conn()
     users = conn.execute("SELECT * FROM users ORDER BY created_at DESC").fetchall()
     conn.close()
@@ -302,7 +421,41 @@ with selected[3]:
                 st.rerun()
 
 # ---------------------------------------------------------------- Paiements
-with selected[4]:
+with selected[TAB["💳 Paiements"]]:
+    st.markdown("##### ✅ Valider un abonnement Premium directement")
+    st.caption(
+        "Pour un paiement reçu hors plateforme (Mobile Money, dépôt bancaire...), saisissez "
+        "l'e-mail de l'abonné et la référence de paiement : l'accès premium sera activé "
+        "immédiatement, sans attendre de demande préalable."
+    )
+    with st.form("manual_subscription_validation"):
+        mv_email = st.text_input("E-mail de l'abonné *", placeholder="exemple@mail.com")
+        mv_plan = st.selectbox("Offre", list(PLAN_PRICES_FCFA.keys()), format_func=lambda p: {
+            "PREMIUM": "Premium mensuel", "MODULE": "Module certifiant", "B2B": "Mission sur mesure",
+        }.get(p, p))
+        mv_ref = st.text_input("Référence de paiement *", placeholder="Ex : MTN-2026-XXXXXX")
+        mv_amount = st.number_input("Montant reçu (FCFA)", min_value=0, step=1000,
+                                     value=PLAN_PRICES_FCFA[mv_plan])
+        mv_duration = st.number_input("Durée de l'accès (jours, 0 = illimité)", min_value=0, value=30, step=30)
+        mv_submit = st.form_submit_button("✅ Valider et activer l'espace premium")
+    if mv_submit:
+        if not mv_email or not mv_ref:
+            st.error("L'e-mail et la référence de paiement sont requis.")
+        else:
+            validated_user, err = validate_subscription_by_email(
+                mv_email, mv_plan, mv_ref, mv_amount, user["id"], duration_days=int(mv_duration) or None,
+            )
+            if err:
+                st.error(err)
+            else:
+                st.success(
+                    f"Abonnement {mv_plan} validé pour {validated_user['full_name']} "
+                    f"({validated_user['email']}) — l'espace premium est désormais accessible."
+                )
+                st.rerun()
+
+    st.markdown("---")
+    st.markdown("##### Demandes reçues via la plateforme")
     conn = get_conn()
     subs = conn.execute(
         "SELECT s.*, u.full_name, u.email FROM subscriptions s JOIN users u ON s.user_id=u.id "
@@ -321,7 +474,10 @@ with selected[4]:
             cc1, cc2 = c5.columns(2)
             if cc1.button("✅", key=f"val-{s['id']}"):
                 conn = get_conn()
-                conn.execute("UPDATE subscriptions SET status='ACTIVE' WHERE id=?", (s["id"],))
+                conn.execute(
+                    "UPDATE subscriptions SET status='ACTIVE', validated_by=?, validated_at=? WHERE id=?",
+                    (user["id"], datetime.utcnow().isoformat(), s["id"]),
+                )
                 conn.commit()
                 conn.close()
                 st.rerun()
@@ -333,7 +489,7 @@ with selected[4]:
                 st.rerun()
 
 # ----------------------------------------------------------------- Support
-with selected[5]:
+with selected[TAB["✉️ Support"]]:
     conn = get_conn()
     tickets = conn.execute("SELECT * FROM support_messages ORDER BY created_at DESC").fetchall()
     conn.close()
@@ -359,7 +515,7 @@ with selected[5]:
                 st.rerun()
 
 # --------------------------------------------------------------- Paramètres
-with selected[6]:
+with selected[TAB["⚙️ Paramètres"]]:
     settings = get_settings()
     with st.form("settings_form"):
         support_email = st.text_input("E-mail support", value=settings["support_email"])
@@ -380,7 +536,7 @@ with selected[6]:
 
 # ------------------------------------------------------- Gestion des admins
 if auth.is_super_admin():
-    with selected[7]:
+    with selected[TAB["🛡️ Gestion des admins"]]:
         conn = get_conn()
         admins = conn.execute("SELECT * FROM users WHERE role IN ('ADMIN','SUPER_ADMIN') ORDER BY created_at").fetchall()
         conn.close()

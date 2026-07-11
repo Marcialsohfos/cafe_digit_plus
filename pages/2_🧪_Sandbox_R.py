@@ -5,6 +5,7 @@ import pandas as pd
 import streamlit as st
 
 from common import init_page, footer
+from db import get_sandbox_examples
 
 init_page("Sandbox R", icon="🧪")
 
@@ -43,6 +44,18 @@ if c1.button("Charger l'exemple : croissance logistique"):
 if c2.button("Charger l'exemple : distribution simulée"):
     st.session_state["r_code"] = EXEMPLE_HISTOGRAMME
     st.rerun()
+
+db_examples = get_sandbox_examples(published_only=True)
+if db_examples:
+    st.markdown("###### Exemples ajoutés par l'administration")
+    ex_cols = st.columns(3)
+    for i, ex in enumerate(db_examples):
+        with ex_cols[i % 3]:
+            if st.button(f"📦 {ex['title']}", key=f"sbex-{ex['id']}", use_container_width=True):
+                st.session_state["r_code"] = ex["code"]
+                st.rerun()
+            if ex["description"]:
+                st.caption(ex["description"])
 
 code = st.text_area("Code R", value=st.session_state["r_code"], height=220, key="r_editor")
 st.session_state["r_code"] = code
