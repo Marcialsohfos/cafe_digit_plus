@@ -160,6 +160,7 @@ def render_sidebar():
             st.page_link("pages/6_🆕_Inscription.py", label=t("Inscription", "Sign up"), icon="🆕")
         if auth.is_admin():
             st.page_link("pages/9_🛠️_Administration.py", label=t("Administration", "Administration"), icon="🛠️")
+            st.page_link("pages/11_📊_Stats_Abonnés.py", label=t("Statistiques abonnés", "Subscriber stats"), icon="📊")
         if not user:
             st.page_link("pages/8_🔑_Super_Admin.py", label=t("Accès Super Admin", "Super Admin access"), icon="🔑")
 
