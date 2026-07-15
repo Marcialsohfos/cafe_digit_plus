@@ -5,6 +5,7 @@ Enrollment, LessonProgress, Quiz, Question, QuizAttempt, Setting,
 SupportMessage, Subscription) dans une base SQLite embarquée, compatible
 avec un déploiement Streamlit Community Cloud (aucun service externe requis).
 """
+import base64
 import json
 import os
 import sqlite3
@@ -34,6 +35,12 @@ DEFAULT_SETTINGS = {
 }
 
 PLAN_PRICES_FCFA = {"PREMIUM": 15000, "MODULE": 60000, "B2B": 1000000}
+
+# 📦 Formats acceptés pour le dépôt de ressources/datasets par l'administration
+RESOURCE_ALLOWED_EXT = {
+    "csv", "xlsx", "zip", "pdf", "shp", "geojson", "gpkg",
+    "sav", "rds", "tif", "tiff", "jpg", "jpeg", "png", "docx", "pptx",
+}
 
 
 def new_id() -> str:
@@ -205,6 +212,28 @@ CREATE TABLE IF NOT EXISTS submissions (
     reviewed_at TEXT,
     reviewed_by TEXT
 );
+
+CREATE TABLE IF NOT EXISTS resources (
+    id TEXT PRIMARY KEY,
+    course_id TEXT REFERENCES courses(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    description TEXT,
+    file_name TEXT NOT NULL,
+    file_ext TEXT NOT NULL,
+    file_size INTEGER NOT NULL DEFAULT 0,
+    file_data TEXT NOT NULL,
+    is_premium_only INTEGER NOT NULL DEFAULT 1,
+    uploaded_by TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS chat_messages (
+    id TEXT PRIMARY KEY,
+    sender_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    recipient_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+    body TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
 """
 
 # Colonnes ajoutées après la première version du schéma : on les ajoute par
@@ -235,6 +264,9 @@ _MIGRATIONS = [
     "ALTER TABLE modules ADD COLUMN objective_en TEXT",
     "ALTER TABLE lessons ADD COLUMN title_en TEXT",
     "ALTER TABLE lessons ADD COLUMN content_en TEXT",
+    # 🧪🐍 Sandbox R / Python : chaque exemple est rattaché à un langage, pour
+    # que les deux modes fonctionnent indépendamment
+    "ALTER TABLE sandbox_examples ADD COLUMN language TEXT NOT NULL DEFAULT 'R'",
 ]
 
 
@@ -369,24 +401,30 @@ def set_setting(key, value):
 # --------------------------------------------------------------- Sandbox R
 
 
-def get_sandbox_examples(published_only=True):
+def get_sandbox_examples(published_only=True, language=None):
+    """language: 'R', 'PYTHON', ou None pour tous les langages confondus.
+    Les exemples enregistrés apparaissent automatiquement dans la Sandbox
+    correspondante, sans autre action que de les avoir publiés."""
     conn = get_conn()
+    q = "SELECT * FROM sandbox_examples WHERE 1=1"
+    params = []
     if published_only:
-        rows = conn.execute(
-            "SELECT * FROM sandbox_examples WHERE published=1 ORDER BY created_at DESC"
-        ).fetchall()
-    else:
-        rows = conn.execute("SELECT * FROM sandbox_examples ORDER BY created_at DESC").fetchall()
+        q += " AND published=1"
+    if language:
+        q += " AND language=?"
+        params.append(language)
+    q += " ORDER BY created_at DESC"
+    rows = conn.execute(q, params).fetchall()
     conn.close()
     return rows
 
 
-def add_sandbox_example(title, description, code, author_id, published=True):
+def add_sandbox_example(title, description, code, author_id, published=True, language="R"):
     conn = get_conn()
     conn.execute(
-        "INSERT INTO sandbox_examples(id,title,description,code,published,author_id,created_at) "
-        "VALUES (?,?,?,?,?,?,?)",
-        (new_id(), title, description, code, int(published), author_id, datetime.utcnow().isoformat()),
+        "INSERT INTO sandbox_examples(id,title,description,code,published,author_id,created_at,language) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        (new_id(), title, description, code, int(published), author_id, datetime.utcnow().isoformat(), language),
     )
     conn.commit()
     conn.close()
@@ -517,6 +555,63 @@ def get_course_quiz_summary(user_id, course_id):
     }
 
 
+# --------------------------------------------- Accès direct cours Premium
+
+
+def get_active_subscription_plan(user_id):
+    """Renvoie le plan payant actif le plus récent de l'utilisateur (ex.
+    PREMIUM, MODULE, B2B, ou toute nouvelle formule ajoutée plus tard), ou
+    None si aucun abonnement payant n'est actif. Sert à déterminer si un
+    membre doit avoir un accès direct aux cours Premium."""
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT plan FROM subscriptions WHERE user_id=? AND status='ACTIVE' AND plan!='FREE' "
+        "ORDER BY started_at DESC LIMIT 1",
+        (user_id,),
+    ).fetchone()
+    conn.close()
+    return row["plan"] if row else None
+
+
+def get_premium_courses():
+    """Liste des cours Premium publiés (is_premium_only=1)."""
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT * FROM courses WHERE published=1 AND is_premium_only=1 ORDER BY created_at DESC"
+    ).fetchall()
+    conn.close()
+    return rows
+
+
+def ensure_premium_access(user_id):
+    """Si l'utilisateur dispose d'un abonnement payant actif (quelle que soit
+    la formule — PREMIUM, MODULE, B2B, ou une future offre Standard/Gold…),
+    l'inscrit automatiquement à tous les cours Premium publiés. Cela permet un
+    accès direct depuis « Mon espace » ou le catalogue, sans avoir à cliquer
+    manuellement sur « Débloquer ce cours » pour chacun d'eux."""
+    plan = get_active_subscription_plan(user_id)
+    if not plan:
+        return plan
+    conn = get_conn()
+    courses = conn.execute(
+        "SELECT id FROM courses WHERE published=1 AND is_premium_only=1"
+    ).fetchall()
+    now = datetime.utcnow().isoformat()
+    for c in courses:
+        existing = conn.execute(
+            "SELECT id FROM enrollments WHERE user_id=? AND course_id=?", (user_id, c["id"])
+        ).fetchone()
+        if not existing:
+            conn.execute(
+                "INSERT INTO enrollments(id,user_id,course_id,progress_pct,enrolled_at,completed_at) "
+                "VALUES (?,?,?,?,?,?)",
+                (new_id(), user_id, c["id"], 0, now, None),
+            )
+    conn.commit()
+    conn.close()
+    return plan
+
+
 # ------------------------------------------------------ Validation manuelle
 
 
@@ -540,3 +635,155 @@ def validate_subscription_by_email(email, plan, payment_ref, amount_fcfa, admin_
     conn.commit()
     conn.close()
     return dict(user_row), None
+
+
+# ---------------------------------------------------- Ressources (datasets)
+
+
+def human_size(num_bytes):
+    """Formate une taille en octets en chaîne lisible (Ko, Mo, Go...)."""
+    n = num_bytes or 0
+    for unit in ("o", "Ko", "Mo", "Go"):
+        if n < 1024:
+            return f"{n:.0f} {unit}" if unit == "o" else f"{n:.1f} {unit}"
+        n /= 1024
+    return f"{n:.1f} To"
+
+
+def add_resource(course_id, title, description, file_name, file_bytes, uploaded_by, is_premium_only=True):
+    """Enregistre une ressource/dataset déposée par l'administration. Le contenu
+    binaire est stocké encodé en base64 (compatible avec tout type de fichier :
+    csv, xlsx, zip, pdf, shp, geojson, gpkg, sav, rds, tif, jpg, png, docx, pptx…)."""
+    ext = file_name.rsplit(".", 1)[-1].lower() if "." in file_name else ""
+    conn = get_conn()
+    conn.execute(
+        "INSERT INTO resources(id,course_id,title,description,file_name,file_ext,file_size,"
+        "file_data,is_premium_only,uploaded_by,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            new_id(), course_id, title, description, file_name, ext, len(file_bytes),
+            base64.b64encode(file_bytes).decode("ascii"), int(is_premium_only), uploaded_by,
+            datetime.utcnow().isoformat(),
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_resources(course_id=None, premium_only=None):
+    """Liste des ressources/datasets déposés (avec le titre du cours associé,
+    le cas échéant). Inclut le contenu binaire encodé, prêt pour un
+    téléchargement via get_resource_bytes()."""
+    conn = get_conn()
+    q = (
+        "SELECT r.*, c.title as course_title FROM resources r "
+        "LEFT JOIN courses c ON r.course_id=c.id WHERE 1=1"
+    )
+    params = []
+    if course_id:
+        q += " AND r.course_id=?"
+        params.append(course_id)
+    if premium_only is not None:
+        q += " AND r.is_premium_only=?"
+        params.append(int(premium_only))
+    q += " ORDER BY r.created_at DESC"
+    rows = conn.execute(q, params).fetchall()
+    conn.close()
+    return rows
+
+
+def get_resource_bytes(resource_row):
+    """Décode le contenu binaire d'une ressource pour un st.download_button."""
+    return base64.b64decode(resource_row["file_data"])
+
+
+def delete_resource(resource_id):
+    conn = get_conn()
+    conn.execute("DELETE FROM resources WHERE id=?", (resource_id,))
+    conn.commit()
+    conn.close()
+
+
+# --------------------------------------------------------- Café Chat (12)
+
+
+def add_chat_message(sender_id, body, recipient_id=None):
+    """Envoie un message dans le salon général (recipient_id=None) ou en
+    message privé à un membre donné (recipient_id=id du destinataire)."""
+    body = (body or "").strip()
+    if not body:
+        return
+    conn = get_conn()
+    conn.execute(
+        "INSERT INTO chat_messages(id,sender_id,recipient_id,body,created_at) VALUES (?,?,?,?,?)",
+        (new_id(), sender_id, recipient_id, body, datetime.utcnow().isoformat()),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_channel_messages(limit=200):
+    """Messages du salon général « ☕ Café Chat », visibles par tous les
+    membres connectés, du plus ancien au plus récent."""
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT m.*, u.full_name as sender_name, u.role as sender_role FROM chat_messages m "
+        "JOIN users u ON m.sender_id=u.id WHERE m.recipient_id IS NULL "
+        "ORDER BY m.created_at DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    conn.close()
+    return list(reversed(rows))
+
+
+def get_direct_messages(user_id, other_id, limit=200):
+    """Fil de discussion privé entre deux membres, du plus ancien au plus récent."""
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT m.*, u.full_name as sender_name FROM chat_messages m JOIN users u ON m.sender_id=u.id "
+        "WHERE (m.sender_id=? AND m.recipient_id=?) OR (m.sender_id=? AND m.recipient_id=?) "
+        "ORDER BY m.created_at DESC LIMIT ?",
+        (user_id, other_id, other_id, user_id, limit),
+    ).fetchall()
+    conn.close()
+    return list(reversed(rows))
+
+
+def search_members(query, exclude_user_id, limit=20):
+    """Recherche un membre par nom ou e-mail, pour démarrer une conversation privée."""
+    query = (query or "").strip()
+    if not query:
+        return []
+    conn = get_conn()
+    like = f"%{query}%"
+    rows = conn.execute(
+        "SELECT id, full_name, email, role FROM users WHERE id!=? AND "
+        "(full_name LIKE ? OR email LIKE ?) ORDER BY full_name LIMIT ?",
+        (exclude_user_id, like, like, limit),
+    ).fetchall()
+    conn.close()
+    return rows
+
+
+def get_recent_dm_partners(user_id, limit=15):
+    """Liste des membres avec qui l'utilisateur a échangé des messages privés,
+    triée par date du dernier message (le plus récent en premier)."""
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT CASE WHEN sender_id=? THEN recipient_id ELSE sender_id END as partner_id, "
+        "MAX(created_at) as last_at FROM chat_messages "
+        "WHERE (sender_id=? OR recipient_id=?) AND recipient_id IS NOT NULL "
+        "GROUP BY partner_id ORDER BY last_at DESC LIMIT ?",
+        (user_id, user_id, user_id, limit),
+    ).fetchall()
+    partners = []
+    for r in rows:
+        u = conn.execute(
+            "SELECT id, full_name, email, role FROM users WHERE id=?", (r["partner_id"],)
+        ).fetchone()
+        if u:
+            partners.append({
+                "id": u["id"], "full_name": u["full_name"], "email": u["email"],
+                "role": u["role"], "last_at": r["last_at"],
+            })
+    conn.close()
+    return partners
