@@ -9,6 +9,8 @@ from db import (
     get_sandbox_examples, add_sandbox_example, delete_sandbox_example,
     validate_subscription_by_email, PLAN_PRICES_FCFA,
     get_submissions, review_submission,
+    get_resources, add_resource, delete_resource, get_resource_bytes,
+    RESOURCE_ALLOWED_EXT, human_size,
 )
 import auth
 
@@ -33,8 +35,8 @@ def slugify(text):
 
 
 tabs = ["📊 Tableau de bord", "📚 Cours & contenus", "📝 Quiz & questions",
-        "🧪 Sandbox R", "🗂️ Dépôts à corriger", "👥 Utilisateurs", "💳 Paiements",
-        "✉️ Support", "⚙️ Paramètres"]
+        "🧪 Sandbox R", "🗂️ Dépôts à corriger", "📦 Ressources & Datasets",
+        "👥 Utilisateurs", "💳 Paiements", "✉️ Support", "⚙️ Paramètres"]
 if auth.is_super_admin():
     tabs.append("🛡️ Gestion des admins")
 
@@ -539,6 +541,16 @@ with selected[TAB["📝 Quiz & questions"]]:
 
     if not quizzes:
         st.info("Aucun quiz pour ce filtre. Créez-en un ci-dessus ou depuis l'onglet « Cours & contenus ».")
+
+    QTYPE_LABELS = {
+        "MCQ_SINGLE": "QCM — une seule bonne réponse",
+        "MCQ_MULTI": "QCM — plusieurs bonnes réponses",
+        "TRUE_FALSE": "Vrai / Faux",
+        "SHORT_ANSWER": "Réponse courte (texte libre)",
+    }
+    OPT_LABELS = ["Option 1", "Option 2", "Option 3", "Option 4"]
+    OPT_IDS = ["opt1", "opt2", "opt3", "opt4"]
+
     for quiz in quizzes:
         with st.expander(f"📝 {quiz['title']} — {quiz['course_title']} / {quiz['module_title']}"):
             conn = get_conn()
@@ -546,7 +558,20 @@ with selected[TAB["📝 Quiz & questions"]]:
             conn.close()
             for q in questions:
                 qc1, qc2 = st.columns([5, 1])
-                qc1.write(f"**{q['prompt']}** _({q['type']}, {q['points']} pt)_")
+                qc1.write(f"**{q['prompt']}** _({QTYPE_LABELS.get(q['type'], q['type'])}, {q['points']} pt)_")
+                q_options = json.loads(q["options"]) if q["options"] else None
+                q_correct = json.loads(q["correct_answer"])
+                if q_options:
+                    correct_ids = q_correct if isinstance(q_correct, list) else [q_correct]
+                    opt_lines = []
+                    for o in q_options:
+                        mark = "✅" if o["id"] in correct_ids else "◻️"
+                        opt_lines.append(f"{mark} {o['text']}")
+                    qc1.caption(" · ".join(opt_lines))
+                elif q["type"] == "TRUE_FALSE":
+                    qc1.caption(f"✅ Bonne réponse : {'Vrai' if q_correct == ['true'] else 'Faux'}")
+                else:
+                    qc1.caption(f"✅ Réponse attendue : {q_correct}")
                 if qc2.button("🗑️", key=f"delq-{q['id']}"):
                     conn = get_conn()
                     conn.execute("DELETE FROM questions WHERE id=?", (q["id"],))
@@ -556,43 +581,89 @@ with selected[TAB["📝 Quiz & questions"]]:
 
             st.markdown("###### Ajouter une question")
             with st.form(f"new_question_{quiz['id']}"):
-                prompt = st.text_area("Énoncé", key=f"qp-{quiz['id']}")
-                qtype = st.selectbox("Type", ["MCQ_SINGLE", "MCQ_MULTI", "TRUE_FALSE", "SHORT_ANSWER"], key=f"qt-{quiz['id']}")
-                opts_raw = st.text_area(
-                    "Options (une par ligne, format id:texte) — pour QCM uniquement",
-                    placeholder="a:Réponse possible A\nb:Réponse possible B\nc:Réponse possible C",
-                    key=f"qo-{quiz['id']}",
+                prompt = st.text_area("Question", key=f"qp-{quiz['id']}")
+                qtype = st.selectbox(
+                    "Type de question", list(QTYPE_LABELS.keys()),
+                    format_func=lambda x: QTYPE_LABELS[x], key=f"qt-{quiz['id']}",
                 )
-                correct_raw = st.text_input(
-                    "Réponse(s) correcte(s) — id(s) séparés par une virgule, ou texte exact pour réponse courte",
-                    key=f"qc-{quiz['id']}",
+
+                st.caption(
+                    "Pour un QCM, remplissez au moins 2 options (jusqu'à 4), puis indiquez la ou "
+                    "les bonne(s) réponse(s) juste en dessous."
                 )
+                oc1, oc2 = st.columns(2)
+                opt1 = oc1.text_input("Option 1", key=f"qo1-{quiz['id']}")
+                opt2 = oc2.text_input("Option 2", key=f"qo2-{quiz['id']}")
+                oc3, oc4 = st.columns(2)
+                opt3 = oc3.text_input("Option 3 (facultatif)", key=f"qo3-{quiz['id']}")
+                opt4 = oc4.text_input("Option 4 (facultatif)", key=f"qo4-{quiz['id']}")
+                opt_texts = [opt1, opt2, opt3, opt4]
+
+                correct_single = st.radio(
+                    "Bonne réponse (QCM à une seule réponse)", OPT_LABELS,
+                    key=f"qcr-{quiz['id']}", horizontal=True,
+                )
+                correct_multi = st.multiselect(
+                    "Bonne(s) réponse(s) (QCM à plusieurs réponses)", OPT_LABELS,
+                    key=f"qcm-{quiz['id']}",
+                )
+                correct_bool = st.radio(
+                    "Bonne réponse (Vrai / Faux)", ["Vrai", "Faux"],
+                    key=f"qtf-{quiz['id']}", horizontal=True,
+                )
+                short_answer = st.text_input(
+                    "Réponse exacte attendue (réponse courte)", key=f"qsa-{quiz['id']}",
+                )
+
                 explanation = st.text_input("Explication / correction affichée après soumission", key=f"qe-{quiz['id']}")
                 points = st.number_input("Points", min_value=1, value=1, key=f"qpt-{quiz['id']}")
                 addq = st.form_submit_button("➕ Ajouter la question")
-            if addq and prompt and correct_raw:
-                options = None
-                if qtype in ("MCQ_SINGLE", "MCQ_MULTI") and opts_raw.strip():
-                    options = [
-                        {"id": line.split(":", 1)[0].strip(), "text": line.split(":", 1)[1].strip()}
-                        for line in opts_raw.strip().splitlines() if ":" in line
+
+            if addq:
+                options, correct, error = None, None, None
+                if not prompt.strip():
+                    error = "L'énoncé de la question est requis."
+                elif qtype in ("MCQ_SINGLE", "MCQ_MULTI"):
+                    filled = [
+                        (OPT_IDS[i], OPT_LABELS[i], opt_texts[i].strip())
+                        for i in range(4) if opt_texts[i].strip()
                     ]
-                if qtype in ("MCQ_MULTI",):
-                    correct = [x.strip() for x in correct_raw.split(",") if x.strip()]
-                elif qtype in ("MCQ_SINGLE", "TRUE_FALSE"):
-                    correct = [correct_raw.strip()]
+                    if len(filled) < 2:
+                        error = "Ajoutez au moins 2 options non vides."
+                    else:
+                        options = [{"id": fid, "text": ftext} for fid, flabel, ftext in filled]
+                        if qtype == "MCQ_SINGLE":
+                            match = next((fid for fid, flabel, _ in filled if flabel == correct_single), None)
+                            if not match:
+                                error = "La bonne réponse choisie correspond à une option restée vide."
+                            else:
+                                correct = [match]
+                        else:
+                            correct = [fid for fid, flabel, _ in filled if flabel in correct_multi]
+                            if not correct:
+                                error = "Sélectionnez au moins une bonne réponse parmi les options remplies."
+                elif qtype == "TRUE_FALSE":
+                    correct = ["true"] if correct_bool == "Vrai" else ["false"]
+                else:  # SHORT_ANSWER
+                    if not short_answer.strip():
+                        error = "Indiquez la réponse exacte attendue."
+                    else:
+                        correct = short_answer.strip()
+
+                if error:
+                    st.error(error)
                 else:
-                    correct = correct_raw.strip()
-                conn = get_conn()
-                conn.execute(
-                    "INSERT INTO questions(id,quiz_id,type,prompt,position,options,correct_answer,explanation,points) "
-                    "VALUES (?,?,?,?,?,?,?,?,?)",
-                    (new_id(), quiz["id"], qtype, prompt, len(questions),
-                     json.dumps(options) if options else None, json.dumps(correct), explanation, int(points)),
-                )
-                conn.commit()
-                conn.close()
-                st.rerun()
+                    conn = get_conn()
+                    conn.execute(
+                        "INSERT INTO questions(id,quiz_id,type,prompt,position,options,correct_answer,explanation,points) "
+                        "VALUES (?,?,?,?,?,?,?,?,?)",
+                        (new_id(), quiz["id"], qtype, prompt, len(questions),
+                         json.dumps(options) if options else None, json.dumps(correct), explanation, int(points)),
+                    )
+                    conn.commit()
+                    conn.close()
+                    st.success("Question ajoutée.")
+                    st.rerun()
 
             if st.button("🗑️ Supprimer ce quiz", key=f"delquiz-{quiz['id']}"):
                 conn = get_conn()
@@ -601,36 +672,38 @@ with selected[TAB["📝 Quiz & questions"]]:
                 conn.close()
                 st.rerun()
 
-# ------------------------------------------------------------------ Sandbox R
+# ------------------------------------------------------------- Sandbox R/Python
 with selected[TAB["🧪 Sandbox R"]]:
     st.caption(
-        "Chargez ici de nouveaux exemples d'applications R qui apparaîtront directement "
-        "dans la page Sandbox R, prêts à être exécutés par les apprenants."
+        "Chargez ici de nouveaux exemples (R ou Python) qui apparaîtront automatiquement "
+        "dans la Sandbox correspondante, prêts à être exécutés par les apprenants."
     )
     with st.expander("➕ Ajouter un nouvel exemple"):
         with st.form("new_sandbox_example"):
+            sb_lang = st.radio("Langage", ["R", "PYTHON"], format_func=lambda x: "🧪 R" if x == "R" else "🐍 Python", horizontal=True)
             sb_title = st.text_input("Titre de l'exemple *", placeholder="Ex : Régression logistique — risque de rechute")
             sb_desc = st.text_area("Description courte (affichée sous le bouton)")
             sb_code = st.text_area(
-                "Code R *", height=220,
-                placeholder="# Collez ici le script R de démonstration\n...",
+                "Code *", height=220,
+                placeholder="# Collez ici le script de démonstration (R ou Python selon le langage choisi)\n...",
             )
             sb_pub = st.checkbox("Publier immédiatement", value=True)
             sb_add = st.form_submit_button("➕ Ajouter l'exemple")
         if sb_add:
             if not sb_title or not sb_code.strip():
-                st.error("Titre et code R sont requis.")
+                st.error("Titre et code sont requis.")
             else:
-                add_sandbox_example(sb_title, sb_desc, sb_code, user["id"], published=sb_pub)
-                st.success("Exemple ajouté à la Sandbox R.")
+                add_sandbox_example(sb_title, sb_desc, sb_code, user["id"], published=sb_pub, language=sb_lang)
+                st.success(f"Exemple ajouté à la Sandbox {'R' if sb_lang == 'R' else 'Python'}.")
                 st.rerun()
 
     st.markdown("---")
     examples = get_sandbox_examples(published_only=False)
     if not examples:
-        st.info("Aucun exemple personnalisé pour le moment — les deux exemples par défaut restent visibles.")
+        st.info("Aucun exemple personnalisé pour le moment — les exemples par défaut restent visibles.")
     for ex in examples:
-        with st.expander(f"{'✅' if ex['published'] else '🚧'} {ex['title']}"):
+        lang_badge = "🧪 R" if ex["language"] == "R" else "🐍 Python"
+        with st.expander(f"{'✅' if ex['published'] else '🚧'} [{lang_badge}] {ex['title']}"):
             st.markdown(f'<div class="cd-mono">{ex["code"]}</div>', unsafe_allow_html=True)
             if ex["description"]:
                 st.caption(ex["description"])
@@ -683,6 +756,77 @@ with selected[TAB["🗂️ Dépôts à corriger"]]:
             if rv_submit:
                 review_submission(s["id"], "REVIEWED", rv_grade, rv_feedback, user["id"])
                 st.success("Correction enregistrée — l'apprenant verra le retour dans son espace.")
+                st.rerun()
+
+# ------------------------------------------------------- Ressources & Datasets
+with selected[TAB["📦 Ressources & Datasets"]]:
+    st.caption(
+        "Déposez ici des jeux de données ou documents (CSV, XLSX, ZIP, PDF, SHP, GeoJSON, GPKG, "
+        "SAV, RDS, TIF, JPG, PNG, DOCX, PPTX), associés ou non à un cours. Les ressources marquées "
+        "« Premium » ne sont téléchargeables que par les membres disposant d'un abonnement payant "
+        "actif (Premium, Module certifiant, B2B…)."
+    )
+    conn = get_conn()
+    all_courses_res = [dict(r) for r in conn.execute("SELECT id, title FROM courses ORDER BY created_at DESC").fetchall()]
+    conn.close()
+
+    with st.expander("➕ Déposer une nouvelle ressource"):
+        with st.form("new_resource"):
+            res_course_opt = ["— Ressource générale (non liée à un cours) —"] + [c["title"] for c in all_courses_res]
+            res_course_sel = st.selectbox("Cours associé", res_course_opt)
+            res_title = st.text_input("Titre de la ressource *", placeholder="Ex : Jeu de données — quartiers de Yaoundé (2023)")
+            res_desc = st.text_area("Description courte")
+            res_file = st.file_uploader(
+                "Fichier * (" + ", ".join(sorted(e.upper() for e in RESOURCE_ALLOWED_EXT)) + ")",
+            )
+            res_premium = st.checkbox("Réservé aux membres Premium / payants", value=True)
+            res_add = st.form_submit_button("📤 Déposer la ressource")
+        if res_add:
+            if not res_title or not res_file:
+                st.error("Titre et fichier sont requis.")
+            else:
+                ext = res_file.name.rsplit(".", 1)[-1].lower() if "." in res_file.name else ""
+                if ext not in RESOURCE_ALLOWED_EXT:
+                    st.error(
+                        f"Format « .{ext} » non autorisé. Formats acceptés : "
+                        f"{', '.join(sorted(RESOURCE_ALLOWED_EXT))}."
+                    )
+                else:
+                    course_id_sel = None
+                    if res_course_sel != res_course_opt[0]:
+                        course_id_sel = next(c["id"] for c in all_courses_res if c["title"] == res_course_sel)
+                    add_resource(
+                        course_id_sel, res_title, res_desc, res_file.name, res_file.getvalue(),
+                        user["id"], is_premium_only=res_premium,
+                    )
+                    st.success("Ressource déposée avec succès.")
+                    st.rerun()
+
+    st.markdown("---")
+    res_course_filter = st.selectbox(
+        "Filtrer par cours", ["Toutes les ressources"] + [c["title"] for c in all_courses_res],
+        key="res_course_filter",
+    )
+    resources_list = get_resources()
+    if res_course_filter != "Toutes les ressources":
+        resources_list = [r for r in resources_list if r["course_title"] == res_course_filter]
+
+    if not resources_list:
+        st.info("Aucune ressource déposée pour ce filtre.")
+    for r in resources_list:
+        badge = "⭐ Premium" if r["is_premium_only"] else "🌍 Ouvert à tous"
+        course_label = r["course_title"] or "Ressource générale"
+        with st.expander(f"📦 {r['title']} — {course_label} · {human_size(r['file_size'])}"):
+            st.caption(f"{badge} · déposé le {r['created_at'][:10]} · {r['file_name']}")
+            if r["description"]:
+                st.write(r["description"])
+            st.download_button(
+                "⬇️ Télécharger", data=get_resource_bytes(r), file_name=r["file_name"],
+                key=f"dlres-{r['id']}",
+            )
+            if st.button("🗑️ Supprimer", key=f"delres-{r['id']}"):
+                delete_resource(r["id"])
+                st.success("Ressource supprimée.")
                 st.rerun()
 
 # ------------------------------------------------------------- Utilisateurs

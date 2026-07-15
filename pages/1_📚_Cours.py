@@ -4,7 +4,10 @@ from datetime import datetime
 import streamlit as st
 
 from common import init_page, footer
-from db import get_conn, new_id, is_module_unlocked, add_submission, get_submissions
+from db import (
+    get_conn, new_id, is_module_unlocked, add_submission, get_submissions,
+    ensure_premium_access, get_active_subscription_plan,
+)
 from i18n import t, tf
 import auth
 
@@ -96,6 +99,10 @@ def mark_complete(user_id, lesson_id, course_id):
     conn.close()
 
 
+_current_user = auth.current_user()
+if _current_user:
+    ensure_premium_access(_current_user["id"])
+
 qp = st.query_params
 selected_slug = qp.get("cours")
 
@@ -114,14 +121,21 @@ if not selected_slug:
         st.info(t("Aucun cours publié pour le moment. Revenez bientôt !", "No course published yet. Check back soon!"))
     else:
         cols = st.columns(3)
+        _has_active_plan = bool(_current_user and get_active_subscription_plan(_current_user["id"]))
         for i, c in enumerate(courses):
             with cols[i % 3]:
                 price = t("Gratuit", "Free") if c["price_fcfa"] == 0 else f"{c['price_fcfa']:,} FCFA".replace(",", " ")
+                if c["is_premium_only"] and _has_active_plan:
+                    price = t("Débloqué ✓", "Unlocked ✓")
                 c_title = tf(c, "title")
                 c_desc = tf(c, "description")
+                premium_badge = (
+                    f'<span class="cd-badge" style="background:rgba(224,138,62,0.18); color:#B4622B; margin-left:0.4rem;">⭐ Premium</span>'
+                    if c["is_premium_only"] else ""
+                )
                 st.markdown(
                     f'<div class="cd-card">'
-                    f'<span class="cd-badge">{c["pillar"]}</span>'
+                    f'<span class="cd-badge">{c["pillar"]}</span>{premium_badge}'
                     f'<h3 style="margin:0.5rem 0 0.3rem;">{c_title}</h3>'
                     f'<p style="font-size:0.85rem; color:rgba(30,42,36,0.65);">{c_desc[:140]}…</p>'
                     f'<div style="display:flex; justify-content:space-between; margin-top:0.6rem;">'
