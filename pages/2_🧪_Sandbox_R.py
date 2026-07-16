@@ -1,7 +1,10 @@
 import ast
 import contextlib
 import io
+import os
 import re
+import subprocess
+import tempfile
 
 import numpy as np
 import pandas as pd
@@ -45,28 +48,78 @@ summary(x)
 """
 
 
+def _set_r_editor(code: str):
+    """Callback exécuté avant le rerun : met à jour directement la clé du widget
+    text_area ('r_editor'), seule façon fiable de changer son contenu affiché."""
+    st.session_state["r_editor"] = code
+
+
+def run_r_sandbox(code: str, timeout: int = 15):
+    """Exécute réellement le script R soumis, via `Rscript` en sous-processus.
+    Tout tracé est redirigé vers un fichier PNG temporaire, qui est ensuite lu et
+    renvoyé sous forme d'image. Retourne (stdout, image_bytes_ou_None, erreur_ou_None)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        script_path = os.path.join(tmp, "script.R")
+        png_path = os.path.join(tmp, "plot.png")
+        wrapped = f'png(filename="{png_path}", width=900, height=550, res=120)\n{code}\ndev.off()\n'
+        with open(script_path, "w") as f:
+            f.write(wrapped)
+
+        try:
+            result = subprocess.run(
+                ["Rscript", "--vanilla", script_path],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                cwd=tmp,
+            )
+        except FileNotFoundError:
+            return "", None, t(
+                "R n'est pas installé sur ce serveur. Installez-le avec : "
+                "sudo apt install -y r-base",
+                "R isn't installed on this server. Install it with: "
+                "sudo apt install -y r-base",
+            )
+        except subprocess.TimeoutExpired:
+            return "", None, t(
+                f"Le script a dépassé le temps limite ({timeout}s).",
+                f"The script exceeded the time limit ({timeout}s).",
+            )
+
+        image_bytes = None
+        if os.path.exists(png_path) and os.path.getsize(png_path) > 0:
+            with open(png_path, "rb") as f:
+                image_bytes = f.read()
+
+        if result.returncode != 0:
+            err = result.stderr.strip() or t("Erreur R inconnue.", "Unknown R error.")
+            return result.stdout, image_bytes, err
+
+        return result.stdout, image_bytes, None
+
+
 def render_r_sandbox():
     st.write(
         t(
-            "Comme cette instance est déployée sur Streamlit Community Cloud (sans runtime R "
-            "installé), le bouton **Exécuter** interprète les paramètres de votre script R et en "
-            "rejoue une simulation équivalente en Python, avec le même graphique.",
-            "Since this instance is deployed on Streamlit Community Cloud (without an R runtime "
-            "installed), the **Run** button interprets your R script's parameters and replays an "
-            "equivalent Python simulation, with the same chart.",
+            "Le code R que vous écrivez ici est **réellement exécuté** sur le serveur via `Rscript`. "
+            "Tout graphique produit (`plot`, `hist`, etc.) est automatiquement capturé et affiché.",
+            "The R code you write here is **actually executed** on the server via `Rscript`. "
+            "Any chart produced (`plot`, `hist`, etc.) is automatically captured and displayed.",
         )
     )
 
-    if "r_code" not in st.session_state:
-        st.session_state["r_code"] = EXEMPLE_R_LOGISTIQUE
+    if "r_editor" not in st.session_state:
+        st.session_state["r_editor"] = EXEMPLE_R_LOGISTIQUE
 
     c1, c2 = st.columns(2)
-    if c1.button(t("Charger l'exemple : croissance logistique", "Load example: logistic growth"), key="r-ex1"):
-        st.session_state["r_code"] = EXEMPLE_R_LOGISTIQUE
-        st.rerun()
-    if c2.button(t("Charger l'exemple : distribution simulée", "Load example: simulated distribution"), key="r-ex2"):
-        st.session_state["r_code"] = EXEMPLE_R_HISTOGRAMME
-        st.rerun()
+    c1.button(
+        t("Charger l'exemple : croissance logistique", "Load example: logistic growth"),
+        key="r-ex1", on_click=_set_r_editor, args=(EXEMPLE_R_LOGISTIQUE,),
+    )
+    c2.button(
+        t("Charger l'exemple : distribution simulée", "Load example: simulated distribution"),
+        key="r-ex2", on_click=_set_r_editor, args=(EXEMPLE_R_HISTOGRAMME,),
+    )
 
     db_examples = get_sandbox_examples(published_only=True, language="R")
     if db_examples:
@@ -74,41 +127,26 @@ def render_r_sandbox():
         ex_cols = st.columns(3)
         for i, ex in enumerate(db_examples):
             with ex_cols[i % 3]:
-                if st.button(f"📦 {ex['title']}", key=f"r-sbex-{ex['id']}", use_container_width=True):
-                    st.session_state["r_code"] = ex["code"]
-                    st.rerun()
+                st.button(
+                    f"📦 {ex['title']}", key=f"r-sbex-{ex['id']}", use_container_width=True,
+                    on_click=_set_r_editor, args=(ex["code"],),
+                )
                 if ex["description"]:
                     st.caption(ex["description"])
 
-    code = st.text_area(t("Code R", "R code"), value=st.session_state["r_code"], height=220, key="r_editor")
-    st.session_state["r_code"] = code
+    code = st.text_area(t("Code R", "R code"), height=220, key="r_editor")
 
     if st.button(t("▶ Exécuter", "▶ Run"), key="r-run"):
-        def num(pattern, default):
-            m = re.search(pattern, code)
-            return float(m.group(1)) if m else default
-
-        if "rnorm" in code:
-            m = re.search(r"rnorm\(\s*(\d+)\s*,\s*mean\s*=\s*([\d.]+)\s*,\s*sd\s*=\s*([\d.]+)", code)
-            n_pts, mean, sd = (int(m.group(1)), float(m.group(2)), float(m.group(3))) if m else (200, 50, 10)
-            x = np.random.normal(mean, sd, n_pts)
-            st.bar_chart(pd.DataFrame({"valeur": x}).round(0)["valeur"].value_counts().sort_index())
-            st.write(f"**{t('summary(x) — résumé statistique', 'summary(x) — statistical summary')}**")
-            st.write(pd.Series(x).describe())
+        with st.spinner(t("Exécution du script R…", "Running R script…")):
+            output, image_bytes, error = run_r_sandbox(code)
+        if output:
+            st.code(output, language="text")
+        if image_bytes:
+            st.image(image_bytes)
+        if error:
+            st.error(error)
         else:
-            K = num(r"K\s*<-\s*([\d.]+)", 10000)
-            r_param = num(r"\br\s*<-\s*([\d.]+)", 0.3)
-            N0 = num(r"N0\s*<-\s*([\d.]+)", 100)
-            time_steps = np.arange(0, 51)
-            N = K / (1 + ((K - N0) / N0) * np.exp(-r_param * time_steps))
-            df = pd.DataFrame({"t": time_steps, "N": N}).set_index("t")
-            st.line_chart(df)
-            st.caption(t(
-                f"Paramètres détectés — K={K:g}, r={r_param:g}, N0={N0:g}",
-                f"Detected parameters — K={K:g}, r={r_param:g}, N0={N0:g}",
-            ))
-
-        st.success(t("Exécution terminée.", "Run complete."))
+            st.success(t("Exécution terminée.", "Run complete."))
 
 
 # ======================================================== Sandbox Python (réelle, restreinte)
@@ -238,6 +276,12 @@ def run_python_sandbox(code: str):
     return stdout.getvalue(), plt, None
 
 
+def _set_py_editor(code: str):
+    """Callback exécuté avant le rerun : met à jour directement la clé du widget
+    text_area ('py_editor'), seule façon fiable de changer son contenu affiché."""
+    st.session_state["py_editor"] = code
+
+
 def render_python_sandbox():
     st.write(
         t(
@@ -250,16 +294,18 @@ def render_python_sandbox():
         )
     )
 
-    if "py_code" not in st.session_state:
-        st.session_state["py_code"] = EXEMPLE_PY_LOGISTIQUE
+    if "py_editor" not in st.session_state:
+        st.session_state["py_editor"] = EXEMPLE_PY_LOGISTIQUE
 
     c1, c2 = st.columns(2)
-    if c1.button(t("Charger l'exemple : croissance logistique", "Load example: logistic growth"), key="py-ex1"):
-        st.session_state["py_code"] = EXEMPLE_PY_LOGISTIQUE
-        st.rerun()
-    if c2.button(t("Charger l'exemple : distribution simulée", "Load example: simulated distribution"), key="py-ex2"):
-        st.session_state["py_code"] = EXEMPLE_PY_HISTOGRAMME
-        st.rerun()
+    c1.button(
+        t("Charger l'exemple : croissance logistique", "Load example: logistic growth"),
+        key="py-ex1", on_click=_set_py_editor, args=(EXEMPLE_PY_LOGISTIQUE,),
+    )
+    c2.button(
+        t("Charger l'exemple : distribution simulée", "Load example: simulated distribution"),
+        key="py-ex2", on_click=_set_py_editor, args=(EXEMPLE_PY_HISTOGRAMME,),
+    )
 
     db_examples = get_sandbox_examples(published_only=True, language="PYTHON")
     if db_examples:
@@ -267,14 +313,14 @@ def render_python_sandbox():
         ex_cols = st.columns(3)
         for i, ex in enumerate(db_examples):
             with ex_cols[i % 3]:
-                if st.button(f"📦 {ex['title']}", key=f"py-sbex-{ex['id']}", use_container_width=True):
-                    st.session_state["py_code"] = ex["code"]
-                    st.rerun()
+                st.button(
+                    f"📦 {ex['title']}", key=f"py-sbex-{ex['id']}", use_container_width=True,
+                    on_click=_set_py_editor, args=(ex["code"],),
+                )
                 if ex["description"]:
                     st.caption(ex["description"])
 
-    code = st.text_area(t("Code Python", "Python code"), value=st.session_state["py_code"], height=220, key="py_editor")
-    st.session_state["py_code"] = code
+    code = st.text_area(t("Code Python", "Python code"), height=220, key="py_editor")
 
     if st.button(t("▶ Exécuter", "▶ Run"), key="py-run"):
         output, plot_obj, error = run_python_sandbox(code)
